@@ -55,10 +55,19 @@ seen run. Until one feature goes operator → Product Manager → GitHub issue �
 spec review → build → four reviews → merge without a human unsticking it, we
 do not know which parts work.
 
-- One real feature through all nine handoffs, dogfooded on this repo.
-- Fix what blocks it. Two defects are already confirmed and will break the
-  first run (see **Known defects** below): new teams get no skills, and the
-  load-bearing `agent` / `ui` labels exist in no repo.
+**Decided 2026-10-04** (operator): the first run is dogfooded on this repo,
+and M1 comes before M2 — see
+[decisions/0002](decisions/0002-dogfood-the-pipeline-on-this-repo.md).
+
+- One real feature through all nine handoffs, dogfooded on this repo. The two
+  confirmed defects below are that feature: they are small, they are in the
+  installer, and fixing them is what the first run carries.
+- Sequenced, not parallel. The labels defect
+  ([#6](https://github.com/dpeckham/my-ai-org/issues/6)) goes first because it
+  is the smaller of the two and both edit `scripts/newproject.sh`; the skills
+  defect ([#5](https://github.com/dpeckham/my-ai-org/issues/5)) follows it. One
+  change at a time through an untested pipeline keeps it clear whether a stall
+  is the pipeline or the change.
 - Write down every place the pipeline stalled, in the README's **Gotchas**
   or as issues.
 
@@ -93,9 +102,12 @@ anything.
 
 - Confirm stalled work, failed runs and budget burn reach the operator, and
   fix them where they do not.
-- Settle budgets: today non-Product-Manager agents are created with
-  `budgetMonthlyCents: 0`, and the Product Manager gets a budget only when
-  `--budget` is passed (open question below).
+- Settle budgets: `newproject.sh` creates the five non-Product-Manager agents
+  with `budgetMonthlyCents: 0`, and the Product Manager gets a budget only
+  when `--budget` is passed. `0` is not an enforced ceiling — every agent in
+  this company carries it, including ones that run daily, and none is paused —
+  so the question is not what `0` means but what ceiling a project should get
+  and what should happen when it is reached.
 - One place that answers "what is every project doing, and what did it cost".
 
 **Done when:** the operator can answer both of those questions without
@@ -142,10 +154,12 @@ Confirmed by reading the code on 2026-10-04, both affecting M1:
 2. **The `agent` and `ui` labels are load-bearing and nothing creates them** ([#6](https://github.com/dpeckham/my-ai-org/issues/6)).
    `scripts/github-bridge.mjs` skips pull requests labelled `agent` to tell
    its own team's work from an outside contributor's, and the whole UI Designer
-   branch of the pipeline keys off `ui`. Neither label is created by any
-   script, and neither exists in this repo. Unlabelled, the Coder's own pull
-   request reads as an outside contribution and the bridge opens a review
-   issue for work already in the pipeline.
+   branch of the pipeline keys off `ui`. No script creates either label.
+   Unlabelled, the Coder's own pull request reads as an outside contribution and
+   the bridge opens a review issue for work already in the pipeline. Both
+   labels were created by hand in this repo on 2026-10-04 to unblock the first
+   pipeline run; that is a one-repo workaround and the defect is unchanged for
+   every other repo.
 
 ## Out of scope
 

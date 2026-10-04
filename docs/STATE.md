@@ -33,10 +33,40 @@ flight, what is blocked, what is next. Goals and milestones live in
   [#1](https://github.com/dpeckham/my-ai-org/issues/1), closed as completed —
   Paperclip as control plane, git as durable memory, one container per project.
 
+### Decided
+
+By the operator, 2026-10-04:
+
+- **The first pipeline run is dogfooded on this repo**, and **M1 comes before
+  M2** — prove the pipeline before putting CI on the installer. Recorded in
+  [decisions/0002](decisions/0002-dogfood-the-pipeline-on-this-repo.md).
+
+Settled by observation rather than by asking:
+
+- **`budgetMonthlyCents: 0` is not an enforced ceiling.** Every agent in this
+  company carries `0`, including ones that run daily, and none is paused. What
+  ceiling a project *should* get is still open (question 2 below).
+
 ### In flight
 
 - **This document and [ROADMAP.md](ROADMAP.md)** — the Product Manager
-  kickoff, on branch `pm/roadmap-and-state`.
+  kickoff, on branch `pm/roadmap-and-state`, in a pull request awaiting the
+  operator's merge.
+- **M1, first feature: the `agent` / `ui` labels**
+  ([#6](https://github.com/dpeckham/my-ai-org/issues/6)) — with the Lead
+  Engineer for spec review, tracked on Paperclip as DAV-17. This is the
+  change the first end-to-end pipeline run carries.
+- **M1, second feature: skills on project creation**
+  ([#5](https://github.com/dpeckham/my-ai-org/issues/5)) — queued behind the
+  first, tracked on Paperclip as DAV-18. Both edit
+  `scripts/newproject.sh`, so they go one at a time.
+
+### Workarounds in place
+
+- **The `agent` and `ui` labels now exist in this repo**, created by hand as
+  the bot on 2026-10-04 so the first pipeline run is not blocked by
+  [#6](https://github.com/dpeckham/my-ai-org/issues/6). No other repo has
+  them, and nothing creates them; the fix is still owed.
 
 ### Blocked
 
@@ -56,11 +86,12 @@ flight, what is blocked, what is next. Goals and milestones live in
 
 In the order the roadmap argues for:
 
-1. **Prove the pipeline once** (M1), dogfooded on this repo, after fixing the
-   two confirmed defects that will break it ([#5](https://github.com/dpeckham/my-ai-org/issues/5),
-   [#6](https://github.com/dpeckham/my-ai-org/issues/6)): new teams get no skills, and the
-   `agent` / `ui` labels exist in no repo. Both are written up under **Known
-   defects** in the roadmap.
+1. **Prove the pipeline once** (M1), dogfooded on this repo. The two confirmed
+   defects are the subject of that first run, not a prerequisite to it:
+   [#6](https://github.com/dpeckham/my-ai-org/issues/6) (nothing creates the
+   `agent` / `ui` labels) first, then
+   [#5](https://github.com/dpeckham/my-ai-org/issues/5) (new teams get no
+   skills). Both are written up under **Known defects** in the roadmap.
 2. **CI for the installer** (M2): shellcheck plus the dry-run and preflight
    paths, before agents become the main authors of ~5,000 lines of shell with
    no automated checking.
@@ -69,21 +100,22 @@ In the order the roadmap argues for:
 
 ### Open questions for the operator
 
-1. **Dogfood target.** Should the first full pipeline run be a feature on this
-   repo, or somewhere lower-stakes? This repo is the honest test, but a
-   pipeline bug here breaks the installer.
-2. **Default trust posture.** Every box is seeded with live Claude, codex and
+Two earlier questions are answered and have moved to **Decided** above: the
+dogfood target, and whether the pipeline or installer CI comes first. A third,
+what `budgetMonthlyCents: 0` means, was settled by observation. What is left:
+
+1. **Default trust posture.** Every box is seeded with live Claude, codex and
    `gh` credentials usable by anything with a shell on it, and the egress
    allowlist is opt-in (`--egress agent`). That is right for a box the
    operator drives and questionable for an unattended agent. Should either
    default flip?
-3. **Budgets.** `scripts/newproject.sh` creates the five non-Product-Manager
-   agents with `budgetMonthlyCents: 0` and the Product Manager with a budget
-   only when `--budget` is given. Is 0 "no limit" in Paperclip, and what
-   per-project monthly ceiling should a new project get by default?
-4. **Audience, and when.** Is "anyone else can install this" a near-term goal?
+2. **Budgets.** `0` is not an enforced ceiling (see **Decided**), so the
+   remaining question is a product one: what monthly ceiling should a new
+   project get by default, and what should happen when it is reached — pause
+   the team, or raise it to the operator and keep going?
+3. **Audience, and when.** Is "anyone else can install this" a near-term goal?
    If so M2 and M4 move up; if this is the operator's own machine first, M1
    and M3 matter more.
-5. **Scope of [#2](https://github.com/dpeckham/my-ai-org/issues/2).** Is it
+4. **Scope of [#2](https://github.com/dpeckham/my-ai-org/issues/2).** Is it
    "re-run the current sync against existing boxes", or a standing reconcile
    loop that detects drift on its own?
