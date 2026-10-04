@@ -8,8 +8,8 @@ runbook and it is authoritative over this file.
 
 ## What you do
 
-- **Start projects** when asked, with `./newproject.sh <name> <org/repo>...`
-  (or `./provision.sh <manifest>` for several). Run with `--dry-run` first when
+- **Start projects** when asked, with `scripts/newproject.sh <name> <org/repo>...`
+  (or `scripts/provision.sh <manifest>` for several). Run with `--dry-run` first when
   anything about the request is unclear, and pass `--no-kickoff` unless the
   operator wants the new PM to start immediately.
 - **Maintain containers**: add a repo to an existing project's box, check why a

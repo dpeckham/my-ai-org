@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Write a provision.sh manifest listing every GitHub repo the gh login can see.
 #
-#   ./list-repos.sh [out-file]        # default: local/projects.manifest
+#   scripts/list-repos.sh [out-file]        # default: local/projects.manifest
 #
 # The result is a menu, not a plan: every project line starts commented out,
 # except projects whose box already exists, so feeding it to provision.sh
@@ -18,7 +18,8 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUT="${1:-$HERE/local/projects.manifest}"
+ROOT="$(cd "$HERE/.." && pwd)"   # repo root: templates/, local/
+OUT="${1:-$ROOT/local/projects.manifest}"
 
 command -v gh >/dev/null || { echo "gh is required."; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "gh is not logged in; run: gh auth login"; exit 1; }
@@ -44,10 +45,10 @@ dupes=$(cut -f1 <<<"$repos" | awk -F/ '{print tolower($2)}' | sort | uniq -d)
   echo "# from the $(wc -l <<<"$repos") repos the gh login can access. Local only; do not commit."
   echo "#"
   echo "# Uncomment a line to provision that repo as a project:"
-  echo "#   ./provision.sh $(realpath --relative-to="$HERE" "$OUT" 2>/dev/null || echo "$OUT") [--dry-run]"
+  echo "#   scripts/provision.sh $(realpath --relative-to="$ROOT" "$OUT" 2>/dev/null || echo "$OUT") [--dry-run]"
   echo "# Put several repos on one line to make them one project (one box, one PM)."
   echo "# Lines already uncommented are projects whose box exists."
-  echo "# Format and options: examples/projects.manifest, ./newproject.sh --help."
+  echo "# Format and options: examples/projects.manifest, scripts/newproject.sh --help."
   echo
   echo "defaults  --pm-adapter claude"
   owner=""

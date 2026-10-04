@@ -25,6 +25,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+S="$HERE/scripts"
 COMPANY=""; PROJECTS="$HERE/local/projects.manifest"; DO_PROJECTS=1
 ARGS=("$@")
 while [[ $# -gt 0 ]]; do
@@ -130,12 +131,12 @@ else
   echo "    browser sign-in and prints the token; copy it, then paste it at the next prompt."
   read -r -p "    Press Enter to start... " _
   claude setup-token
-  "$HERE/set-claude-token.sh" --no-boxes
+  "$S/set-claude-token.sh" --no-boxes
 fi
 
 # ================================================================= 2. host
 phase "2. Host"
-"$HERE/host-setup.sh"
+"$S/host-setup.sh"
 
 # =========================================================== 3. base image
 phase "3. Base image"
@@ -144,7 +145,7 @@ if pixels checkpoint list base 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx re
 else
   pixels list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx base || pixels create base
   pixels start base >/dev/null 2>&1 || true
-  incus file push "$HERE/base-setup.sh" px-base/root/base-setup.sh --project agents
+  incus file push "$S/base-setup.sh" px-base/root/base-setup.sh --project agents
   incus exec px-base --project agents -- bash /root/base-setup.sh
   incus exec px-base --project agents -- bash -c 'rm -f /root/base-setup.sh /etc/ssh/ssh_host_*'
   pixels checkpoint create base --label ready
@@ -152,24 +153,24 @@ fi
 
 # ============================================================ 4. paperclip
 phase "4. Paperclip"
-"$HERE/paperclip-up.sh"
+"$S/paperclip-up.sh"
 
 # ================================================================== 5. org
 phase "5. Organisation"
-"$HERE/paperclip-org.sh" ${COMPANY:+--company "$COMPANY"}
+"$S/paperclip-org.sh" ${COMPANY:+--company "$COMPANY"}
 
 # ============================================================= 6. projects
 phase "6. Projects"
 if [[ $DO_PROJECTS -eq 0 ]]; then
   info "skipped (--no-projects)"
 elif [[ -f "$PROJECTS" ]]; then
-  "$HERE/provision.sh" "$PROJECTS"
+  "$S/provision.sh" "$PROJECTS"
 else
-  "$HERE/list-repos.sh" "$PROJECTS"
+  "$S/list-repos.sh" "$PROJECTS"
   echo
   echo "    No project list yet, so one was written with every repo you can access,"
   echo "    all commented out. Uncomment the ones you want, then re-run ./install.sh"
-  echo "    (or just ./provision.sh $PROJECTS)."
+  echo "    (or just scripts/provision.sh $PROJECTS)."
 fi
 
 phase "Done"

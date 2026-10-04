@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Spin up a project container from the dev base image.
 #
-#   ./newbox.sh <name> [--repo org/repo]... [--egress agent] [--no-herdr] [--no-auth]
+#   scripts/newbox.sh <name> [--repo org/repo]... [--egress agent] [--no-herdr] [--no-auth]
 #
 # Clones px-base's `ready` checkpoint (a copy-on-write snapshot, so this is
 # ~1s), authorizes the caller's SSH key, clears the stale host key for a
@@ -40,7 +40,7 @@ LABEL="${LABEL:-$NAME}"
 HOSTALIAS="px-$NAME"
 KNOWN="$HOME/.ssh/known_hosts.pixels"
 
-command -v pixels >/dev/null || { echo "pixels not found; run ./laptop-setup.sh"; exit 1; }
+command -v pixels >/dev/null || { echo "pixels not found; run ./install.sh (or scripts/host-setup.sh)"; exit 1; }
 
 step() { echo; echo "==> $*"; }
 
@@ -141,7 +141,7 @@ fi
 step "Ready"
 echo "  ssh $HOSTALIAS"
 echo "  pixels console $NAME"
-echo "  t3:    ./t3-connect.sh $HOSTALIAS"
+echo "  t3:    scripts/t3-connect.sh $HOSTALIAS"
 echo "  paperclip SSH environment: host $HOSTALIAS, user pixel, path /home/pixel/paperclip"
 [[ $SEED_AUTH -eq 1 ]] && echo "  agents: claude / codex / gh authenticated from this machine's credentials"
 for repo in ${REPOS+"${REPOS[@]}"}; do

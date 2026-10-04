@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Copy this machine's agent + GitHub credentials into a container.
 #
-#   ./seed-agent-auth.sh px-foo                   # a project box, over SSH
-#   ./seed-agent-auth.sh --incus paperclip:paperclip   # instance:user, via incus exec
+#   scripts/seed-agent-auth.sh px-foo                   # a project box, over SSH
+#   scripts/seed-agent-auth.sh --incus paperclip:paperclip   # instance:user, via incus exec
 #
 # The --incus form is for the Paperclip container, which runs no sshd.
 #
-#   ./seed-agent-auth.sh --only claude px-foo     # just one of claude|codex|gh
+#   scripts/seed-agent-auth.sh --only claude px-foo     # just one of claude|codex|gh
 #
 # claude: the long-lived token from `claude setup-token`, as stored by
 # set-claude-token.sh -- not a copy of ~/.claude/.credentials.json, whose
@@ -78,7 +78,7 @@ if want claude; then
       done' < "$CLAUDE_TOKEN_FILE"
     echo "    seeded (long-lived token)"
   else
-    warn "no long-lived token; run 'claude setup-token', then ./set-claude-token.sh"
+    warn "no long-lived token; run 'claude setup-token', then scripts/set-claude-token.sh"
   fi
 fi
 

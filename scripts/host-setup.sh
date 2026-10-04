@@ -3,7 +3,7 @@
 # Run it ON that machine, as your normal user (in incus-admin; sudo is asked
 # for once, for the DNS unit). Idempotent.
 #
-#   ./host-setup.sh
+#   scripts/host-setup.sh
 #
 # Does four things:
 #   1. Creates the `agents` Incus project, restricted and capped. Every project
@@ -197,5 +197,5 @@ Next, build the dev base image (once):
   incus exec px-base --project $PROJECT -- bash -c 'rm -f /root/base-setup.sh /etc/ssh/ssh_host_*'
   pixels checkpoint create base --label ready
 Then the control plane:
-  ./paperclip-up.sh
+  scripts/paperclip-up.sh
 EOF

@@ -2,7 +2,7 @@
 # The opinionated Paperclip organisation: the operator's root company with a
 # Chief of Staff at the top and a DevOps agent beside it. Idempotent.
 #
-#   ./paperclip-org.sh [--company "Name"]
+#   scripts/paperclip-org.sh [--company "Name"]
 #
 #   company          the single root company. Created if there is none (asks
 #                    for a name, defaulting to "<git user.name>'s company");
@@ -23,6 +23,7 @@ set -euo pipefail
 shopt -s inherit_errexit   # failures inside $(...) must stop the script too
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"   # repo root: templates/, local/
 PAPERCLIP="${PAPERCLIP:-http://127.0.0.1:3100}"
 COMPANY=""
 while [[ $# -gt 0 ]]; do
@@ -127,8 +128,8 @@ ensure_agent() {
 
 # ------------------------------------------------------------------- agents
 step "Agents"
-COS_ID=$(ensure_agent "Chief of Staff" ceo "Chief of Staff" "$HERE/templates/chief-of-staff.md" "" '{}')
-ensure_agent "DevOps" devops "DevOps" "$HERE/templates/devops-agent.md" "$COS_ID" \
+COS_ID=$(ensure_agent "Chief of Staff" ceo "Chief of Staff" "$ROOT/templates/chief-of-staff.md" "" '{}')
+ensure_agent "DevOps" devops "DevOps" "$ROOT/templates/devops-agent.md" "$COS_ID" \
   "$(jq -n --arg d "$INFRA_DIR" '{cwd: $d}')" >/dev/null
 
 step "Done"

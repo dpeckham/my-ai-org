@@ -1,89 +1,234 @@
-# my-ai-org — project containers + Paperclip on Incus
+# my-ai-org: run a company of AI agents from one machine
 
-Everything needed to rebuild an AI-agent workshop on a fresh machine:
+## Why this exists
 
-- **One Incus container per project.** Each is a clone of a prebuilt image
-  with git, mise, `claude` / `codex` / `opencode`, and the project's repo
-  checked out. Clones are copy-on-write snapshots, so a new box takes seconds.
-- **[Paperclip](https://github.com/paperclipai/paperclip) as the control
-  plane**, in its own container. It schedules and supervises agents that run
-  *inside* the project containers over SSH, and its DevOps agent provisions
-  those containers itself.
-- **The host stays clean.** Nothing agent-related is installed on the machine
-  you work at beyond the Incus client and pixels.
+This is for operators with more projects than they can keep track of. It
+gives you a complete agent organisation that works in the background, keeps
+every project moving, and puts the things that need you in front of you:
 
-The repo holds no secrets and nothing project-specific. Credentials are copied
-from the machine running the scripts at the time they run. Which projects
-exist is decided when you run `newbox.sh`, not here.
+- **Agents run in the background.** Each project has its own agents, working
+  on issues while you do something else.
+- **Problems come to you.** Stalled work, failed runs, decisions only a human
+  should make and budget burn are raised by the agents, not found by you
+  digging.
+- **Agents fill the roles a company needs.** Project management, QA,
+  development, DevOps, marketing, finance (CFO): each is an agent with a job
+  description, a manager and a budget.
 
-```
- host (your machine)                                  Incus
- ─────────────────────                 ┌────────────────────────────────────────┐
-  browser ──localhost:3100────────────►│ default project                        │
-                                       │  paperclip  (Paperclip, pixels, incus) │
-  ssh px-foo / pixels ──┐              │     │ restricted cert   │ ssh px-*     │
-                        │              ├─────┼───────────────────┼──────────────┤
-                        │              │ agents project (restricted, capped)    │
-                        └─────────────►│  px-base (template, `ready` snapshot)  │
-                                       │  px-foo  px-bar  ...  (project boxes)  │
-                                       └────────────────────────────────────────┘
-```
+In practice you can run a company from inside here. You set direction as the
+board, a Chief of Staff turns it into work, a PM leads each project, and
+specialists join where needed.
 
-## Contents
-
-| File | Runs on | Does |
-|------|---------|------|
-| `install.sh` | Incus host | **the one command**: prerequisites, sign-ins, and every script below, in order |
-| `host-setup.sh` | Incus host | creates the restricted `agents` project, binds the Incus API to the bridge, sets up `.incus` DNS, installs pixels + the `px-*` SSH block |
-| `base-setup.sh` | template container (root) | installs git, gh, mise, herdr, t3, and the agent CLIs into the base image |
-| `paperclip-up.sh` | Incus host | builds or updates the Paperclip container end to end |
-| `paperclip-org.sh` | Incus host | the root company, Chief of Staff and DevOps agents |
-| `paperclip-setup.sh` | Paperclip container (root) | node, Paperclip and its service, pixels, incus client, SSH key |
-| `newproject.sh` | host or Paperclip | a whole project: box, SSH environment, PM agent, Paperclip project, kickoff issue |
-| `provision.sh` | host or Paperclip | runs `newproject.sh` for every line of a manifest, with a preflight and summary |
-| `list-repos.sh` | host | writes `local/projects.manifest`: every repo the `gh` login can see, as a commented-out manifest to pick from |
-| `newbox.sh` | host or Paperclip | clones the base into a project box, authorizes keys, seeds creds, checks out repos |
-| `set-claude-token.sh` | host | installs the long-lived Claude token (`claude setup-token`) on the host, in Paperclip, and on every box |
-| `seed-agent-auth.sh` | host | copies this machine's claude / codex / gh credentials into a box or the Paperclip container |
-| `t3-connect.sh` | host | connects the T3 Code client to a box from the CLI |
-| `templates/chief-of-staff.md`, `templates/devops-agent.md` | — | the standing agents' instructions (`AGENTS.md`) |
-| `templates/pm-agent.md` | — | the PM agent's instructions (`AGENTS.md`), rendered per project |
-| `examples/projects.manifest` | — | manifest format for `provision.sh`, with placeholder names |
-| `pixels-config.toml` | — | pixels settings shared by every caller (the setup scripts add the connection part) |
-| `bootstrap.sh` / `firstboot.sh` / `laptop-setup.sh` | — | the optional **remote box** layout (see the end) |
-| `CLAUDE.md` | — | rules for agents working in this repo, including Paperclip's DevOps agent |
+The repo holds no secrets and nothing project-specific. Credentials are
+installed from the machine running the scripts, and your project list lives
+in the gitignored `local/`.
 
 ## Quick start
 
-On a Linux machine (Debian/Ubuntu, Arch or Fedora), in a real terminal:
+### 1. Before you start
+
+You need:
+
+- a Linux machine running **Debian/Ubuntu, Arch or Fedora**, with `sudo`. The
+  installer adds everything else: Incus, mise, gh, jq, git. **macOS isn't
+  supported yet**, because project boxes are Linux (Incus) containers. Support
+  using Apple's own [`container`](https://github.com/apple/container) runtime
+  is designed in [#3](https://github.com/dpeckham/my-ai-org/issues/3) and
+  waiting for someone with a Mac to pick it up. Until then, run the install on
+  a Linux machine, or in a Linux VM on the Mac.
+- a **GitHub account** that can see the repos you want as projects.
+- a **Claude subscription** (Pro or Max). Agents run on it through a
+  long-lived token, not an API key.
+- nothing else listening on **localhost:3100**, where Paperclip's UI goes.
+
+### 2. Get the repo
 
 ```
-git clone https://github.com/<org>/<this-repo>.git && cd <this-repo>
-./install.sh
+git clone https://github.com/<org>/<this-repo>.git
+cd <this-repo>
 ```
 
-That's the whole install. It asks for sudo, a GitHub sign-in and a Claude
-sign-in the first time, then builds everything:
+### 3. Files to create or edit (all optional)
+
+| File | Why you'd touch it |
+|------|--------------------|
+| `local/projects.manifest` | **Which repos become projects.** Skip it on the first run, and the installer writes one listing every repo you can access, all commented out. Or start from the example: `mkdir -p local && cp examples/projects.manifest local/projects.manifest`. Never committed (`local/` is gitignored). |
+| `templates/*.md` | The instructions every Chief of Staff, DevOps and PM agent starts with. Edit before installing to change them for new agents; existing agents are edited in the Paperclip UI. |
+| `scripts/pixels-config.toml` | Default size of a project box (4 CPU / 4GiB) and the egress allowlist. |
+
+Sizing is set by environment variables instead of a file. The default cap for
+all project boxes together is 20GiB of memory, which is about four boxes.
+For more, run the installer as `AGENTS_MEMORY=40GiB ./install.sh` (see **The
+`agents` project**).
+
+### 4. Terminal steps beforehand (optional)
+
+The installer asks for each of these when it needs it, so doing them first
+only saves interruptions:
+
+```
+gh auth login              # GitHub, for cloning private repos
+claude setup-token         # prints a long-lived Claude token; keep it for the installer's prompt
+codex login                # only if you want codex agents as well
+```
+
+If you were just added to the `sudo` group, log out and in again first.
+
+### 5. Run the installer
+
+```
+./install.sh               # asks for your company's name; --company "Name" skips that
+```
+
+Run it in a real terminal; it prompts for sudo and for sign-ins. It works in
+phases and skips any that are already done:
 
 | Phase | What happens |
 |-------|--------------|
-| 0. prereqs | installs Incus, mise, gh, jq, git; sets up subordinate IDs, starts and initialises Incus; joins `incus-admin` (and carries on under it, no logout needed); creates `~/.ssh/id_ed25519` if missing |
-| 1. sign-ins | `gh auth login`, and a long-lived Claude token via `claude setup-token` → `set-claude-token.sh` (see **Agent credentials**); each only if missing |
-| 2. host | `host-setup.sh` |
-| 3. base image | builds the template project boxes are cloned from (skipped if `base:ready` exists) |
-| 4. paperclip | `paperclip-up.sh` |
-| 5. org | `paperclip-org.sh`: your root company, a Chief of Staff and a DevOps agent |
-| 6. projects | `provision.sh local/projects.manifest`. On the first run there is no manifest, so it writes one listing every repo you can access, all commented out, and stops. Uncomment what you want and run `./install.sh` again |
+| 0. prereqs | installs Incus, mise, gh, jq, git; sets up subordinate IDs; starts and initialises Incus; joins `incus-admin` (and carries on under it, no logout); creates `~/.ssh/id_ed25519` if missing |
+| 1. sign-ins | `gh auth login`, and the long-lived Claude token (`claude setup-token`, then a hidden paste prompt), each only if missing |
+| 2. host | `scripts/host-setup.sh`: the restricted `agents` project, the Incus API on the bridge, `.incus` DNS, pixels |
+| 3. base image | the template every project box is cloned from, about 3 minutes the first time |
+| 4. paperclip | `scripts/paperclip-up.sh`: the Paperclip container, its service, credentials |
+| 5. org | `scripts/paperclip-org.sh`: your company, a Chief of Staff and a DevOps agent |
+| 6. projects | `scripts/provision.sh local/projects.manifest`, one box and one PM per project |
 
-Options: `--company "Name"` (otherwise it asks, defaulting to "<your git
-name>'s company"), `--projects FILE`, `--no-projects`.
+**The first run stops after phase 6 writes your project list.** Open
+`local/projects.manifest`, uncomment the repos you want (several repos on
+one line become one project), then run it again:
 
-It's idempotent. Re-running skips every finished step, so after a failure,
-fix the cause and run it again. On an existing install, a re-run brings it up
-to date.
+```
+$EDITOR local/projects.manifest
+./install.sh               # or just: scripts/provision.sh local/projects.manifest
+```
 
-The individual scripts below are what `install.sh` runs. Use them on their
-own to redo one piece.
+Each new project's PM starts right away on a kickoff issue: it reads the repo
+and opens a pull request with a roadmap. Add `--no-kickoff` to that project's
+line to hold it back.
+
+### 6. After installing
+
+- **Paperclip:** <http://localhost:3100>. Your Chief of Staff, DevOps agent and
+  project PMs are in the org chart.
+- **A project box:** `ssh px-<name>`, or `pixels console <name>`.
+- **More projects later:** add lines to the manifest and re-run, or
+  `scripts/newproject.sh <name> <org/repo>`. Or ask the DevOps agent in
+  Paperclip to do it.
+
+Options: `--company "Name"`, `--projects FILE`, `--no-projects`.
+`./install.sh` is idempotent: after a failure, fix the cause and run it again.
+On an existing install, a re-run brings everything up to date.
+
+## Architecture
+
+```
+ your machine (the Incus host)
+ ┌──────────────────────────────────────────────────────────────────────────────┐
+ │  you: browser ──► localhost:3100            you: ssh px-foo / pixels         │
+ │                       │ (proxy)                      │                       │
+ │  Incus ───────────────┼──────────────────────────────┼─────────────────────  │
+ │  ┌ default project ───▼─────────────────────┐        │                       │
+ │  │ paperclip container                      │        │                       │
+ │  │   Paperclip server + Postgres            │        │                       │
+ │  │   Chief of Staff, DevOps  (run here)     │        │                       │
+ │  │   repo checkouts Paperclip owns          │        │                       │
+ │  └──────┬──────────────────────┬────────────┘        │                       │
+ │         │ restricted cert      │ ssh (agent runs)    │                       │
+ │         │ (provisioning)       │                     │                       │
+ │  ┌ agents project ─▼───────────▼─────────────────────▼───────────────────┐   │
+ │  │ px-base  template + `ready` snapshot                                  │   │
+ │  │ px-foo, px-bar, ...   one per project: repos, toolchain, its agents   │   │
+ │  └───────────────────────────────────────────────────────────────────────┘   │
+ └──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### The layers
+
+| Layer | What it is | Why it's separate |
+|-------|------------|-------------------|
+| **Host** | your machine, running Incus | Kept clean for your own work. Nothing agent-related runs on it beyond the Incus client, pixels and your own `claude`. |
+| **Paperclip container** | the control plane: org chart, issues, schedules, approvals, budgets, UI; the Chief of Staff and DevOps agents run here | One place to look at everything. Its UI is reachable only from the host's `localhost`. |
+| **`agents` Incus project** | a walled-off area holding every project box | What Paperclip can create and destroy. It's capped and restricted, so the worst a runaway agent can do is wreck project boxes, never the host or Paperclip. |
+| **Project box** (`px-<name>`) | one container per project, cloned in seconds from a template, with the repos and toolchain installed | The project's agents run here, so projects can't reach each other's files, processes or credentials, and a box can be thrown away and rebuilt. |
+| **Git** | each project's repo | The durable memory: roadmaps, state and decisions live in the repo, not in chat history. |
+
+### The organisation
+
+Everything lives in **one Paperclip company**, which stands for you. You are
+the board: you set direction and approve anything irreversible.
+
+- **Chief of Staff** (role `ceo`): turns your requests into work, sets
+  priorities across projects, watches for stalled work and failed runs, and
+  reports up.
+- **DevOps:** provisions and maintains project boxes, using the same scripts
+  you would.
+- **A PM per project:** owns that project's roadmap and state, and breaks work
+  into issues.
+- **Specialists as needed:** developer, QA, marketing, CFO and so on, hired
+  into the org chart with their own instructions and budgets.
+
+Each project is a Paperclip *project* inside the one company, so work can be
+handed between projects with ordinary issue assignment. A project that grows
+into a real business of its own can later be split into a separate Paperclip
+company.
+
+### How work happens
+
+1. **Starting a project.** You, or DevOps, run `scripts/newproject.sh <name>
+   <org/repo>`. It clones a box from the template, checks the repo out, and
+   creates the Paperclip side: an SSH environment pointing at the box, a PM,
+   the project, and a kickoff issue.
+2. **An agent run.** When an agent is woken (an issue assigned, a comment, a
+   schedule), Paperclip copies the project's workspace into a fresh directory
+   on the box, runs `claude` or `codex` there over SSH, and copies the changes
+   back. The agent reports progress to Paperclip through a tunnel inside that
+   SSH session, so boxes need no network route to it.
+3. **Results.** Code lands as branches and pull requests on the project's
+   repo. Status, questions and blockers land as comments on the Paperclip
+   issue, where the Chief of Staff and you see them.
+
+### Credentials and trust
+
+- **Agents use your subscriptions, not API keys:** a long-lived Claude token
+  (`claude setup-token`) and your codex and GitHub logins, installed into each
+  box at creation and never baked into the template.
+- **Paperclip's Incus access is restricted** to the `agents` project:
+  unprivileged containers only, no host paths, capped memory, CPU and
+  instance count.
+- **Agent forwarding is off** everywhere, so no box can borrow your SSH keys.
+- **An optional egress allowlist** (`--egress agent`) limits a box to the
+  hosts on an approved list.
+
+The sections after **Repository layout** cover each piece in depth.
+
+## Repository layout
+
+```
+README.md           this manual
+install.sh          the one command
+CLAUDE.md           rules for agents working in this repo (including the DevOps agent)
+templates/          instructions for the Chief of Staff, DevOps and PM agents
+examples/           manifest format, with placeholder names
+local/              your project list and other machine-local files (gitignored)
+scripts/            everything install.sh runs, usable one at a time
+```
+
+| Script | Runs on | Does |
+|--------|---------|------|
+| `host-setup.sh` | Incus host | the restricted `agents` project, Incus API on the bridge, `.incus` DNS, pixels and the `px-*` SSH block |
+| `base-setup.sh` | template container (root) | git, gh, mise, herdr, t3 and the agent CLIs in the base image |
+| `paperclip-up.sh` | Incus host | builds or updates the Paperclip container end to end |
+| `paperclip-setup.sh` | Paperclip container (root) | node, Paperclip and its service, pixels, incus client, SSH key |
+| `paperclip-org.sh` | Incus host | the root company, Chief of Staff and DevOps agents |
+| `newproject.sh` | host or Paperclip | one project: box, SSH environment, PM agent, Paperclip project, kickoff issue |
+| `provision.sh` | host or Paperclip | `newproject.sh` for every line of a manifest, with a preflight and summary |
+| `list-repos.sh` | host | writes `local/projects.manifest` from every repo the `gh` login can see |
+| `newbox.sh` | host or Paperclip | a bare box: clone the base, authorize keys, seed creds, check out repos |
+| `set-claude-token.sh` | host | installs the long-lived Claude token on the host, in Paperclip, and on every box |
+| `seed-agent-auth.sh` | host | copies claude / codex / gh credentials into a box or the Paperclip container |
+| `t3-connect.sh` | host | connects the T3 Code client to a box from the CLI |
+| `pixels-config.toml` | — | pixels settings shared by every caller |
+| `bootstrap.sh`, `firstboot.sh`, `laptop-setup.sh` | — | the optional **remote box** layout (see the end) |
 
 ## The `agents` project: the trust boundary
 
@@ -149,7 +294,7 @@ fork needs the seeded `gh` token.
 
 Telemetry: Paperclip reports usage by default. `paperclip-setup.sh` turns it
 off (`PAPERCLIP_TELEMETRY_DISABLED=1` in the user manager's environment). Run
-`PAPERCLIP_TELEMETRY=on ./paperclip-up.sh` to leave it on.
+`PAPERCLIP_TELEMETRY=on scripts/paperclip-up.sh` to leave it on.
 
 ```
 incus exec paperclip -- su - paperclip                     # a shell as the service user
@@ -248,8 +393,8 @@ which the operator then runs alongside the first.
 ### Starting a project
 
 ```
-./newproject.sh <name> <org/repo> [<org/repo>...] [options]
-./provision.sh  <manifest> [--dry-run]       # many at once
+scripts/newproject.sh <name> <org/repo> [<org/repo>...] [options]
+scripts/provision.sh  <manifest> [--dry-run]       # many at once
 ```
 
 `newproject.sh` takes a project from repo to working PM in seven steps. Each
@@ -269,7 +414,7 @@ run can simply be repeated:
 Options: `--pm-adapter claude|codex`, `--pm-model`, `--reports-to <agent>`,
 `--budget <dollars>`, `--pm-instructions <file>`, `--no-kickoff`,
 `--egress agent` and `--no-auth` (both passed to `newbox.sh`), `--company`,
-and `--dry-run`. `./newproject.sh --check` runs only the preflight.
+and `--dry-run`. `scripts/newproject.sh --check` runs only the preflight.
 
 The PM's instructions come from `templates/pm-agent.md`, rendered with the
 project name and repo list, and are stored by Paperclip as the agent's
@@ -288,9 +433,9 @@ gitignored for exactly this.
 To start from everything you have access to:
 
 ```
-./list-repos.sh                                  # -> local/projects.manifest
+scripts/list-repos.sh                                  # -> local/projects.manifest
 $EDITOR local/projects.manifest                  # uncomment what you want
-./provision.sh local/projects.manifest --dry-run
+scripts/provision.sh local/projects.manifest --dry-run
 ```
 
 The generated file lists every repo the `gh` login can clone (owned,
@@ -407,7 +552,7 @@ already-diverged clones.
 
 ```
 pixels start base || true                          # errors if already running
-incus file push base-setup.sh px-base/root/base-setup.sh --project agents
+incus file push scripts/base-setup.sh px-base/root/base-setup.sh --project agents
 incus exec px-base --project agents -- bash /root/base-setup.sh
 incus exec px-base --project agents -- bash -c 'rm -f /root/base-setup.sh /etc/ssh/ssh_host_*'
 pixels checkpoint delete base ready
@@ -422,11 +567,11 @@ Bump `T3_VERSION` at the top of `base-setup.sh` and re-run. Check
 ## Project boxes
 
 ```
-./newbox.sh foo                                  # clone -> keys -> ssh -> creds -> herdr
-./newbox.sh foo --repo org/repo                  # ...with a repo checked out
-./newbox.sh foo --repo org/api --repo org/web    # ...several
-./newbox.sh foo --egress agent                   # ...with the outbound allowlist on
-./newbox.sh foo --no-auth                        # ...without seeding agent credentials
+scripts/newbox.sh foo                                  # clone -> keys -> ssh -> creds -> herdr
+scripts/newbox.sh foo --repo org/repo                  # ...with a repo checked out
+scripts/newbox.sh foo --repo org/api --repo org/web    # ...several
+scripts/newbox.sh foo --egress agent                   # ...with the outbound allowlist on
+scripts/newbox.sh foo --no-auth                        # ...without seeding agent credentials
 
 ssh px-foo                                       # pixel@px-foo.incus
 pixels console foo                               # no SSH at all; Incus exec API
@@ -491,7 +636,7 @@ a scoped deploy key inside the box.
 ### Connecting T3 Code to a box
 
 ```
-./t3-connect.sh px-foo
+scripts/t3-connect.sh px-foo
 ```
 
 That starts a t3 server on the box, tunnels it to `localhost:3799`, mints a
@@ -541,7 +686,7 @@ Instead:
 
 ```
 claude setup-token          # once, in a real terminal: browser sign-in, prints a token
-./set-claude-token.sh       # paste it at the hidden prompt
+scripts/set-claude-token.sh       # paste it at the hidden prompt
 ```
 
 `claude setup-token` mints a long-lived token billed to the same
@@ -578,8 +723,8 @@ snapshot every clone inherits.
 
 **This hands live subscription tokens to anything with a shell on the box.**
 That is usually what you want on a box you drive yourself, and not what you
-want around an untrusted unattended agent. `./newbox.sh foo --no-auth` skips
-it, and `./seed-agent-auth.sh px-foo` adds them later.
+want around an untrusted unattended agent. `scripts/newbox.sh foo --no-auth` skips
+it, and `scripts/seed-agent-auth.sh px-foo` adds them later.
 
 ### Egress allowlist
 
@@ -728,15 +873,15 @@ still supported:
 1. Install Debian 13 netinst on the box: no desktop, SSH server ticked, with a
    spare raw partition for the ZFS pool. **Disable Secure Boot**, because the
    ZFS DKMS module won't load with it on.
-2. From the laptop: `NO_TAILSCALE=1 ./bootstrap.sh <ip> <user> /dev/<partition>`.
+2. From the laptop: `NO_TAILSCALE=1 scripts/bootstrap.sh <ip> <user> /dev/<partition>`.
    It copies your key, runs `firstboot.sh` as root (ZFS, Incus on the ZFS pool,
    Avahi, Tailscale, key-only sshd, a 4GB ARC cap, nc/dig for the SSH hop),
    registers the box as the Incus remote `box`, and reboots it.
    `firstboot.sh` serves the API on `[::]:8443`, since the laptop has to reach it.
-3. On the box: `NO_DNS=1 ./host-setup.sh` to create the `agents` project.
+3. On the box: `NO_DNS=1 scripts/host-setup.sh` to create the `agents` project.
    There's no mise there, so it stops after that, and leaves the existing API
    address alone.
-4. On the laptop: `BOX_HOST=<box>.local ./laptop-setup.sh` for pixels and the
+4. On the laptop: `BOX_HOST=<box>.local scripts/laptop-setup.sh` for pixels and the
    ProxyCommand SSH block.
 5. Build the base image with the commands under **Updating the image**, with `box:` in front of
    instance names (`incus exec box:px-base --project agents …`).

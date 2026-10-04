@@ -1,7 +1,16 @@
 # Working in this repo
 
-This repo rebuilds an Incus + pixels + Paperclip setup on a new machine, for
-its owner and for anyone else. The README is the manual; keep it true.
+This repo installs a complete AI-agent organisation for operators with more
+projects than they can track: Paperclip as the control plane, one Incus
+container per project, and agents (Chief of Staff, DevOps, a PM per project,
+and other roles as needed) working in the background and surfacing what needs
+a human. `./install.sh` builds it all from a bare Linux machine, for its owner
+and for anyone else. The README is the manual; keep it true.
+
+Layout: `install.sh` and the docs at the top; every other script in
+`scripts/`; agent instructions in `templates/`; the manifest format in
+`examples/`; machine-local files (real project lists) in the gitignored
+`local/`. New scripts go in `scripts/`, and the top level stays this small.
 
 ## Rules for changes
 
@@ -31,8 +40,8 @@ Starting a project (box, Paperclip SSH environment, PM agent, project, and
 kickoff issue in one go):
 
 ```
-./newproject.sh <name> <org/repo> [<org/repo>...]   # --dry-run first if unsure
-./provision.sh <manifest>                           # several, from a file
+scripts/newproject.sh <name> <org/repo> [<org/repo>...]   # --dry-run first if unsure
+scripts/provision.sh <manifest>                           # several, from a file
 pixels list
 ```
 

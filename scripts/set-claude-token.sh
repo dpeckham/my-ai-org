@@ -2,8 +2,8 @@
 # Install a long-lived Claude subscription token everywhere agents run.
 #
 #   claude setup-token                      # once, in a real terminal (browser sign-in)
-#   ./set-claude-token.sh                   # paste it at the hidden prompt
-#   ./set-claude-token.sh < token-file      # or pipe it in (paperclip-up.sh does this)
+#   scripts/set-claude-token.sh                   # paste it at the hidden prompt
+#   scripts/set-claude-token.sh < token-file      # or pipe it in (paperclip-up.sh does this)
 #
 # Why: copying ~/.claude/.credentials.json between machines works only until
 # the first refresh. Claude rotates the refresh token on every refresh, so
@@ -139,7 +139,7 @@ else
   [[ -n "$boxes" ]] || info "none running"
   for b in $boxes; do
     if "$HERE/seed-agent-auth.sh" --only claude "px-$b" >/dev/null 2>&1; then info "px-$b: done"
-    else info "px-$b: failed (try: ./seed-agent-auth.sh --only claude px-$b)"; fi
+    else info "px-$b: failed (try: scripts/seed-agent-auth.sh --only claude px-$b)"; fi
   done
 fi
 

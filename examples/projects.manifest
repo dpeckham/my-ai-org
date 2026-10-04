@@ -1,11 +1,11 @@
 # Example manifest for provision.sh. Placeholder names only; keep real
 # manifests out of this repo (they name real orgs and repos).
 #
-#   ./provision.sh path/to/projects.manifest [--dry-run]
+#   scripts/provision.sh path/to/projects.manifest [--dry-run]
 #
 # One project per line:  <name> <org/repo> [<org/repo>...] [newproject.sh options]
-# The line is exactly what you would pass to ./newproject.sh, so see
-# `./newproject.sh --help` for the options.
+# The line is exactly what you would pass to scripts/newproject.sh, so see
+# `scripts/newproject.sh --help` for the options.
 #
 # `defaults` lines are prepended to every project line; options given on a
 # project line come after them, so they win. Blank lines and # comments are

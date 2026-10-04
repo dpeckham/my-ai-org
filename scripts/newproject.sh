@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Start a project: its own container, plus a PM agent in Paperclip working on it.
 #
-#   ./newproject.sh <name> <org/repo> [<org/repo>...] [options]
-#   ./newproject.sh --check          # preflight only; changes nothing
-#   ./newproject.sh --help
+#   scripts/newproject.sh <name> <org/repo> [<org/repo>...] [options]
+#   scripts/newproject.sh --check          # preflight only; changes nothing
+#   scripts/newproject.sh --help
 #
 # Steps, each skipped when its object already exists (matched by name), so a
 # failed run can simply be repeated:
@@ -30,6 +30,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"   # repo root: templates/, local/
 PAPERCLIP="${PAPERCLIP:-http://127.0.0.1:3100}"
 PC_NAME="${PC_NAME:-paperclip}"          # the Paperclip container, from the host side
 PC_USER=paperclip
@@ -37,8 +38,8 @@ REMOTE_PATH=/home/pixel/paperclip        # where Paperclip stages runs on the bo
 
 usage() {
   cat <<'EOF'
-Usage: ./newproject.sh <name> <org/repo> [<org/repo>...] [options]
-       ./newproject.sh --check | --capacity | --help
+Usage: scripts/newproject.sh <name> <org/repo> [<org/repo>...] [options]
+       scripts/newproject.sh --check | --capacity | --help
 
 Options:
   --company NAME|ID         Paperclip company (default: the only one)
@@ -58,7 +59,7 @@ EOF
 MODE=run
 NAME=""; REPOS=()
 COMPANY=""; PM_ADAPTER=claude; PM_MODEL=""; REPORTS_TO=""; BUDGET=""
-PM_TEMPLATE="$HERE/templates/pm-agent.md"
+PM_TEMPLATE="$ROOT/templates/pm-agent.md"
 NEWBOX_ARGS=(); KICKOFF=1; DRY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -234,7 +235,7 @@ ENV_ID=$(api GET "/companies/$COMPANY_ID/environments" \
 # environment, so every agent run on this box gets CLAUDE_CODE_OAUTH_TOKEN.
 TOKEN_SECRET_ID=$(api GET "/companies/$COMPANY_ID/secrets" | jq -r '(if type == "array" then . else (.secrets // .items // []) end)
   | .[] | select(.name == "claude-oauth-token") | .id' | head -1)
-[[ -n "$TOKEN_SECRET_ID" ]] || info "note: no claude-oauth-token secret; claude agents will fail to authenticate (run ./set-claude-token.sh)"
+[[ -n "$TOKEN_SECRET_ID" ]] || info "note: no claude-oauth-token secret; claude agents will fail to authenticate (run scripts/set-claude-token.sh)"
 if [[ -n "$ENV_ID" ]]; then
   info "exists ($ENV_ID)"
 elif [[ $DRY -eq 1 ]]; then

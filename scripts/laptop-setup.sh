@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Drive project containers on a SEPARATE Incus box from this laptop. Idempotent.
 #
-#   BOX_HOST=mybox.local ./laptop-setup.sh
+#   BOX_HOST=mybox.local scripts/laptop-setup.sh
 #
 # Only for the remote-box layout (a headless machine built with bootstrap.sh /
 # firstboot.sh). If Incus runs on the machine you are sitting at, use

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Connect the T3 Code client on this laptop to a dev container, from the CLI.
 #
-#   ./t3-connect.sh px-foo [local-port]
+#   scripts/t3-connect.sh px-foo [local-port]
 #
 # The desktop app's Settings -> Connections -> Add environment -> SSH flow does
 # the same thing through the GUI, and cannot be scripted: the app keeps its

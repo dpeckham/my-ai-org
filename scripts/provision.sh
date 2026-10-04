@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Provision a list of projects in one go.
 #
-#   ./provision.sh <manifest> [--dry-run]
+#   scripts/provision.sh <manifest> [--dry-run]
 #
 # Each project line in the manifest is a newproject.sh command line minus the
 # script name (see examples/projects.manifest). This script only adds the
@@ -73,7 +73,7 @@ if [[ "$limit_mib" -gt 0 ]]; then
   printf '    memory: %d new box(es) x %dMiB = %dMiB, %dMiB of %dMiB free\n' \
     "$need" "$per_box_mib" "$want" "$left" "$limit_mib"
   if [[ "$want" -gt "$left" ]]; then
-    echo "    Not enough room. Raise it (AGENTS_MEMORY=... ./host-setup.sh) or destroy boxes."
+    echo "    Not enough room. Raise it (AGENTS_MEMORY=... scripts/host-setup.sh) or destroy boxes."
     [[ ${#DRY[@]} -eq 0 ]] && exit 1
   fi
 fi

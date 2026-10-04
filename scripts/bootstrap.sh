@@ -2,8 +2,8 @@
 # Run this from your LAPTOP. It provisions a freshly installed Debian 13 box.
 #
 # Usage:
-#   ./bootstrap.sh <host-or-ip> <username> <zfs-partition> [remote-name]
-#   NO_TAILSCALE=1 ./bootstrap.sh ...     (LAN only, skip the tailnet step)
+#   scripts/bootstrap.sh <host-or-ip> <username> <zfs-partition> [remote-name]
+#   NO_TAILSCALE=1 scripts/bootstrap.sh ...     (LAN only, skip the tailnet step)
 #
 #   host           the new box (LAN IP or hostname), reachable via SSH right now
 #   username       the non-root user created during the Debian install

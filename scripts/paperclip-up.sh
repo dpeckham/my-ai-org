@@ -2,7 +2,7 @@
 # Build (or update) the Paperclip control-plane container. Run on the Incus
 # host, after host-setup.sh. Idempotent -- re-run it to pick up script changes.
 #
-#   ./paperclip-up.sh [--no-auth]
+#   scripts/paperclip-up.sh [--no-auth]
 #
 # Result:
 #   - a `paperclip` container in the *default* Incus project, running Paperclip
@@ -45,7 +45,7 @@ PC_USER=paperclip
 step() { echo; echo "==> $*"; }
 in_pc() { incus exec "$NAME" --project default -- su - "$PC_USER" -c "$1"; }
 
-incus project show "$PROJECT" >/dev/null 2>&1 || { echo "No '$PROJECT' project; run ./host-setup.sh first."; exit 1; }
+incus project show "$PROJECT" >/dev/null 2>&1 || { echo "No '$PROJECT' project; run scripts/host-setup.sh first."; exit 1; }
 BRIDGE_IP=$(incus network get "$BRIDGE" ipv4.address); BRIDGE_IP="${BRIDGE_IP%/*}"
 API="$BRIDGE_IP:8443"
 [[ "$(incus config get core.https_address)" == "$API" ]] \
@@ -138,7 +138,7 @@ if [[ $SEED_AUTH -eq 1 && -s "$TOKEN_FILE" ]]; then
   step "Claude token"
   "$HERE/set-claude-token.sh" --no-verify --no-boxes < "$TOKEN_FILE" | sed 's/^/  /'
 elif [[ $SEED_AUTH -eq 1 ]]; then
-  echo; echo "NOTE: no $TOKEN_FILE; run 'claude setup-token' then ./set-claude-token.sh"
+  echo; echo "NOTE: no $TOKEN_FILE; run 'claude setup-token' then scripts/set-claude-token.sh"
 fi
 
 if [[ $SEED_AUTH -eq 1 ]]; then
