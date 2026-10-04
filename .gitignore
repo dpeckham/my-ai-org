@@ -1,2 +1,5 @@
 # Machine-local files: real project manifests name real orgs and repos.
 local/
+
+# Paperclip stages each agent run inside the workspace; it is scratch, not ours.
+.paperclip-runtime/

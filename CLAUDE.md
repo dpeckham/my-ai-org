@@ -7,11 +7,12 @@ and other roles as needed) working in the background and surfacing what needs
 a human. `./install.sh` builds it all from a bare Linux machine, for its owner
 and for anyone else. The README is the manual; keep it true.
 
-Layout: `install.sh` and the docs at the top; every other script in
+Layout: `install.sh` and the README at the top; every other script in
 `scripts/` (shared helpers in `scripts/lib/`); agent instructions in
 `templates/`; agent skills in `skills/`, with `skills/sources.manifest`
-mapping skills to roles; the manifest format in `examples/`; machine-local
-files (real project lists) in the gitignored `local/`. New scripts go in
+mapping skills to roles; the manifest format in `examples/`; the project's own
+roadmap, state and decision records in `docs/`; machine-local files (real
+project lists) in the gitignored `local/`. New scripts go in
 `scripts/`, and the top level stays this small.
 
 ## Rules for changes

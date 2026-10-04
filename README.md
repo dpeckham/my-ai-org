@@ -256,7 +256,13 @@ skills/             skills the agents load, and sources.manifest listing which r
 examples/           manifest format, with placeholder names
 local/              your project list and other machine-local files (gitignored)
 scripts/            everything install.sh runs, usable one at a time
+docs/               this project's own roadmap, state and decision records
 ```
+
+`docs/` is where this project keeps its product memory, the same way every
+project's agents are told to keep theirs: `docs/ROADMAP.md` for goals,
+milestones and what is out of scope, `docs/STATE.md` for dated status, and
+`docs/decisions/NNNN-title.md` one file per significant product decision.
 
 | Script | Runs on | Does |
 |--------|---------|------|
