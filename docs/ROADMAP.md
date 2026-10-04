@@ -132,14 +132,14 @@ M1 is the first instance of it.
 
 Confirmed by reading the code on 2026-10-04, both affecting M1:
 
-1. **A project created outside a full install gets no skills.**
+1. **A project created outside a full install gets no skills** ([#5](https://github.com/dpeckham/my-ai-org/issues/5)).
    `scripts/newproject.sh` creates the six agents and fires the kickoff issue
    immediately, but never attaches skills; only `scripts/skills-sync.sh`
    (install phase 8) does that. So the documented way to add a project later —
    and the DevOps agent's normal tool — produces a team whose agents are
    missing every skill their role depends on, including `team-workflow`, which
    is how they know the pipeline exists at all.
-2. **The `agent` and `ui` labels are load-bearing and nothing creates them.**
+2. **The `agent` and `ui` labels are load-bearing and nothing creates them** ([#6](https://github.com/dpeckham/my-ai-org/issues/6)).
    `scripts/github-bridge.mjs` skips pull requests labelled `agent` to tell
    its own team's work from an outside contributor's, and the whole UI Designer
    branch of the pipeline keys off `ui`. Neither label is created by any

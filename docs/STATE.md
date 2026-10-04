@@ -57,7 +57,8 @@ flight, what is blocked, what is next. Goals and milestones live in
 In the order the roadmap argues for:
 
 1. **Prove the pipeline once** (M1), dogfooded on this repo, after fixing the
-   two confirmed defects that will break it: new teams get no skills, and the
+   two confirmed defects that will break it ([#5](https://github.com/dpeckham/my-ai-org/issues/5),
+   [#6](https://github.com/dpeckham/my-ai-org/issues/6)): new teams get no skills, and the
    `agent` / `ui` labels exist in no repo. Both are written up under **Known
    defects** in the roadmap.
 2. **CI for the installer** (M2): shellcheck plus the dry-run and preflight
