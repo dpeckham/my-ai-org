@@ -29,6 +29,15 @@ flight, what is blocked, what is next. Goals and milestones live in
   polls each project's repos on a per-project interval and turns new issues,
   outside pull requests, human comments, failed CI on the default branch and
   Dependabot alerts into Paperclip work. No AI, no inbound network access.
+- **A brief on running without Paperclip**
+  ([briefs/github-native-edition.md](briefs/github-native-edition.md)) — asked
+  for by the operator for clients with nowhere to host the control plane.
+  Finding: the pipeline, roles, skills and bot are already GitHub-native, and
+  Paperclip supplies only a seven-verb coordination layer, so the route is to
+  extract that port and write a second adapter rather than build a second
+  product. GitHub's notification inbox turns out to need a classic PAT; an
+  App's own webhook delivery log is the better event source. No decision taken;
+  three questions for the operator at the end of the brief.
 - **A decision record of where this is going:**
   [#1](https://github.com/dpeckham/my-ai-org/issues/1), closed as completed —
   Paperclip as control plane, git as durable memory, one container per project.
@@ -121,7 +130,9 @@ what `budgetMonthlyCents: 0` means, was settled by observation. What is left:
    the team, or raise it to the operator and keep going?
 3. **Audience, and when.** Is "anyone else can install this" a near-term goal?
    If so M2 and M4 move up; if this is the operator's own machine first, M1
-   and M3 matter more.
+   and M3 matter more. The Paperclip-less brief sharpens this: "clients" is a
+   different answer again, and it pulls M4 forward hard. See
+   [briefs/github-native-edition.md](briefs/github-native-edition.md) §7.
 4. **Scope of [#2](https://github.com/dpeckham/my-ai-org/issues/2).** Is it
    "re-run the current sync against existing boxes", or a standing reconcile
    loop that detects drift on its own?
