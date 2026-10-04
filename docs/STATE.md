@@ -106,6 +106,14 @@ Settled by observation rather than by asking:
 - **This document and [ROADMAP.md](ROADMAP.md)** — the Product Manager
   kickoff, on branch `pm/roadmap-and-state`, in a pull request awaiting the
   operator's merge.
+- **The backend verb layer**
+  ([#16](https://github.com/dpeckham/my-ai-org/issues/16)) — filed 2026-10-04,
+  **not yet in the pipeline and not assigned**, pending the operator's word on
+  whether it jumps ahead of M1's two defects. It routes every box operation
+  through seven verbs so a second backend is one file instead of eight call
+  sites. Step 1 of [#3](https://github.com/dpeckham/my-ai-org/issues/3), on the
+  critical path for both M4 and M6, Linux-only, needs no Mac — the one piece of
+  client-readiness work nothing currently blocks.
 - **M1, first feature: the `agent` / `ui` labels**
   ([#6](https://github.com/dpeckham/my-ai-org/issues/6)) — with the Lead
   Engineer for spec review, tracked on Paperclip as DAV-17. This is the

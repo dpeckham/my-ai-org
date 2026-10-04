@@ -136,8 +136,9 @@ dated requirement. See
   each distro the README claims (Debian/Ubuntu, Arch, Fedora).
 - macOS as a second box backend: designed in
   [#3](https://github.com/dpeckham/my-ai-org/issues/3), waiting on someone
-  with Apple silicon. Step 1 of that issue (the backend verb layer) is a
-  Linux-only refactor and can start any time. **Now load-bearing, not
+  with Apple silicon. Step 1 of that issue, the backend verb layer, is a
+  Linux-only refactor that can start any time and is filed separately as
+  [#16](https://github.com/dpeckham/my-ai-org/issues/16). **Now load-bearing, not
   optional:** a Mac-only client has no LXC, and access to a Mac with macOS 26
   on Apple silicon is an escalation for the operator rather than a background
   wish.
@@ -197,12 +198,14 @@ central proposal is now decided: **coordination state lives in the GitHub
 thread**, so the box holds nothing durable and a run can resume on any machine.
 Three things that reach back into this list:
 
-- **Step 1 of [#3](https://github.com/dpeckham/my-ai-org/issues/3), the backend
-  verb layer, is the seam this milestone's dispatcher needs on either
-  platform**, and 0005 made it load-bearing rather than merely useful: with no
-  state in the box, the backend is a per-install config and that layer is where
-  the choice lives. Shared with M4, a Linux-only refactor, needs no Mac — the
-  first thing anyone can usefully do here.
+- **The backend verb layer is filed as
+  [#16](https://github.com/dpeckham/my-ai-org/issues/16)** (step 1 of
+  [#3](https://github.com/dpeckham/my-ai-org/issues/3)), and it is the seam
+  this milestone's dispatcher needs on either platform. 0005 made it
+  load-bearing rather than merely useful: with no state in the box, the backend
+  is a per-install config and that layer is where the choice lives. Shared with
+  M4, a Linux-only refactor, needs no Mac — the first thing anyone can usefully
+  do here.
 - **The verb layer must carry stdin in and stream stdout out of `box_exec`.**
   The dispatcher needs no eighth verb if it does, and retrofitting it later is
   awkward (brief §12).
