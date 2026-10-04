@@ -1,7 +1,12 @@
 # Brief: the agent runtime decomposed, on macOS and on Linux
 
-**Status:** open — brainstorming, written for the operator 2026-10-04. Nothing
-here is decided. It extends
+**Status:** partly answered, 2026-10-04. §3 — coordination state in the GitHub
+thread — was put to the operator and accepted ("take the portability"), and is
+now [decisions/0005](../decisions/0005-coordination-state-lives-in-the-github-thread.md).
+§10–§13 were written after that answer and are the consequences of it: what it
+settles, what it dissolves, and what the thing actually looks like built. The
+two macOS questions were left unanswered and §14 records the standing defaults
+they fall back to. It extends
 [briefs/github-native-edition.md](github-native-edition.md) and
 [decisions/0004](../decisions/0004-github-native-is-the-single-project-edition.md);
 where it disagrees with 0004, §8 says so and 0004 still stands until the
@@ -288,7 +293,16 @@ document against a real Paperclip wake on the same issue, with the handoff
 comment standing in for the continuation summary. That is now a concrete,
 cheap experiment rather than a vague comparison.
 
-## 9. What I need from the operator
+## 9. What I needed from the operator — and what came back
+
+1. **ANSWERED: yes, state in the thread** — "take the portability". Recorded as
+   [0005](../decisions/0005-coordination-state-lives-in-the-github-thread.md);
+   §10–§13 below are what follows from it.
+2. **Unanswered: macOS tier 1 or tier 2.** §10 argues the answer no longer
+   gates anything, and §14 gives the standing default.
+3. **Unanswered: ship a no-container tier 0.** §14 gives the standing default.
+
+The questions as originally put:
 
 1. **Does the state-in-the-thread model appeal, or does it feel too clever?**
    It is the load-bearing idea here: it is what makes a box disposable and a
@@ -302,3 +316,201 @@ cheap experiment rather than a vague comparison.
 3. **Is tier 0 — no container at all — something we are willing to ship with a
    warning?** It is what a client with an Intel Mac and no patience will do
    anyway. Documenting it is harm reduction; shipping it is an endorsement.
+
+---
+
+*Everything below was written after the operator accepted §3.*
+
+## 10. What the answer settles — and the one question it dissolves
+
+Putting the state in the thread was argued for on portability. It buys that,
+and it buys one more thing that is worth more:
+
+**If nothing durable lives in the box, nothing about the pipeline depends on
+what the box *is*.** The box stops being part of the architecture and becomes a
+sandbox with a toolchain — a place to run a command with a filesystem and a
+network. Everything that distinguishes Incus from Apple's `container` from a
+Lima VM from no container at all is then confined to one file of shell behind
+the verb layer.
+
+That dissolves question 2. "macOS tier 1 or tier 2" was framed as a product
+decision — which backend *is* the Mac product — and it is not one. It is a
+per-install configuration, chosen by the installer from what the machine can
+actually do:
+
+| The client's machine | Backend it gets | Chosen by |
+|---|---|---|
+| Linux | Incus, as today | `uname` |
+| Mac, macOS 26, Apple silicon | `apple/container` (tier 1) | `uname` + version + arch |
+| Intel Mac, or older macOS | Lima VM running the Incus install (tier 2) | the same check failing |
+| Client refuses a VM | no container (tier 0) | explicit opt-in only — see §14 |
+
+Both macOS tiers get built eventually because both have clients. The real
+question was never *which*, it was **which one we write first**, and that is a
+scheduling question with an obvious answer: tier 2 needs no Apple silicon and
+no macOS 26, so it is the one that can be written and tested this month, and it
+makes the Mac story "it works today" instead of "it works when hardware
+arrives". Tier 1 is the better destination and stays the intended shape.
+
+This is the reason the brief now says the thread answer was the load-bearing
+one: it converted the platform question from a fork in the road into an
+ordering.
+
+## 11. The state comment, specified
+
+One comment per issue, posted by the bot the first time the dispatcher touches
+the issue, edited in place for ever after.
+
+```markdown
+**Pipeline** · Lead Engineer · spec review · updated 2026-10-04 18:42 UTC
+
+<details><summary>Handoffs (3)</summary>
+
+- 18:42 — Product Manager → Lead Engineer · spec written · [log](…)
+- 18:05 — dispatcher → Product Manager · woken by issue opened
+- 18:05 — opened by @someone
+
+</details>
+
+<!-- my-ai-org:v1 {"holder":"lead-engineer","phase":"spec-review",
+"cursor":{"issue":2211,"pr":null},"question":null,
+"runs":[{"id":"r-41","role":"product-manager","exit":"handoff","cents":37}],
+"orgRef":"a1b2c3d","updated":"2026-10-04T18:42:11Z"} -->
+```
+
+| Field | Means | Written by | Re-derivable from |
+|---|---|---|---|
+| `holder` | the role that owns the work now | dispatcher, on handoff | the GitHub assignee |
+| `phase` | where in the nine-handoff pipeline | dispatcher | the holder plus the PR's state |
+| `cursor` | highest comment id already folded into a wake | dispatcher, after assembling a wake | re-read the thread; worst case one repeated wake |
+| `question` | the comment id of an outstanding human question | dispatcher, when an agent asks | the `needs:operator` label |
+| `runs` | id, role, exit reason, cost per run | dispatcher, on exit | nothing — this is the only copy, and it is the thin run history 0004 accepted |
+| `orgRef` | default-branch sha the role config was read at | dispatcher, per run | the default branch's current head |
+
+Everything except `runs` is a cache of something GitHub already knows, which is
+what makes recovery boring: delete the comment and the dispatcher rebuilds it
+from the assignee, the labels and the thread, losing only cost history.
+
+**Who writes it.** Only the dispatcher. Agents emit a normal handoff comment
+and exit; the dispatcher folds that into the log and updates the block. Two
+reasons: it keeps the race surface at one process holding one per-issue lock,
+and it keeps "maintain this JSON correctly" out of the agent's prompt, where it
+would be both unreliable and a waste of the context window.
+
+**Resuming on another machine, concretely.** The client's Mac dies on Tuesday.
+On Wednesday the dispatcher is installed on a different machine, pointed at the
+same repo with the same App. It reads the thread, finds `holder:
+"lead-engineer"` and `cursor: 2211`, sees comment 2213 is newer, creates a
+worktree at the PR's head, assembles a wake, and the Lead Engineer carries on
+from where it was. Nothing was restored, because nothing was backed up. The
+Paperclip edition cannot do this; its queue is in Postgres on the dead machine.
+
+## 12. The dispatcher loop
+
+The whole control plane, on either platform. Only step 6 differs between them,
+and only in which backend file it calls.
+
+```
+every N seconds:
+  1. events   ← App delivery log since cursor   (fallback: poll each repo)
+  2. for each affected issue, enqueue once (coalesce: ten comments, one run)
+
+  for each queued issue, holding a per-issue lock:
+  3. state    ← read the state comment          (§11; rebuild if absent)
+  4. decide   ← is a run owed? (new comments past cursor, a handoff, a human
+                answer, a timer, a non-final exit to continue). If not, drop.
+  5. role     ← read .my-ai-org/roles/<holder>.md AT THE DEFAULT BRANCH (§7)
+                → record the sha as orgRef
+  6. box      ← box_create if absent; token ← mint 1-hour installation token
+                workspace ← git worktree inside the box at the base sha
+  7. wake     ← assemble the §2 document from the thread, the answers, the
+                cursor and the previous handoff comment
+  8. run      ← box_exec <engine> --headless, wake on stdin, log to a file
+  9. exit     ← final (handed off, asked the human, finished) → advance holder
+                non-final (crashed, out of budget, hit the stop file) → mark,
+                retry with backoff, escalate to the operator on the third
+ 10. write    ← comment as the agent if it produced one; update the state
+                comment; release the lock
+```
+
+Three details that are not obvious until you write it out:
+
+- **Step 6 cannot mount a host directory into an Incus box.** pixels' `agents`
+  project deliberately refuses host-path disks — that is one of the trust
+  boundary's load-bearing restrictions, verified in the install. So the
+  dispatcher cannot stage a worktree on the host and mount it in, the way
+  Paperclip stages a per-run directory today. The worktree is created *inside*
+  the box instead: each box keeps a bare mirror of the repo and `git worktree
+  add`s from it per run. The mirror is a cache — rebuildable, not state — which
+  keeps it consistent with [0005](../decisions/0005-coordination-state-lives-in-the-github-thread.md).
+- **The dispatcher needs no verb beyond [#3](https://github.com/dpeckham/my-ai-org/issues/3)'s
+  seven**, provided `box_exec` carries stdin in and streams stdout out. The
+  wake goes in on stdin; the log comes out on stdout. That is worth stating as
+  a requirement on the verb layer before it is written, because it is cheap to
+  design in and awkward to retrofit.
+- **Coalescing at step 2 is what makes polling affordable.** Ten comments in a
+  minute is one run, not ten — the same property Paperclip's wake payload
+  already demonstrates, which is why this very run received one comment id and
+  a full thread rather than ten wakes.
+
+## 13. What the operator actually installs
+
+**On Linux**, the whole GitHub-native install is:
+
+- `apt`/`pacman`/`dnf` for Incus and mise; `install.sh` phases 0–3 unchanged.
+- One systemd **user** service for the dispatcher and one timer, with
+  `loginctl enable-linger` so it survives logout — the same mechanism the
+  bridge already uses.
+- The App's private key in a file readable only by that user, on the host.
+- Per-project boxes cloned from `base:ready`, with the nftables egress
+  allowlist.
+- No Paperclip, no Postgres, no web UI, no SSH driver.
+
+That is strictly *less* than today's install. It is the one genuinely
+encouraging thing about this edition's Linux story: the work is all dispatcher,
+and the install gets smaller.
+
+**On a Mac**, the same list with four substitutions and one new instruction:
+
+- Homebrew and mise instead of the distro package manager.
+- A launchd **LaunchAgent** instead of a systemd user service — and here is the
+  new instruction: a LaunchDaemon starts at boot but has no access to the
+  user's XPC session, so it cannot drive `container`. The Mac therefore needs
+  **auto-login on a dedicated user with FileVault unlocked at boot**, where
+  Linux needs only lingering. This is the one thing in the Mac install a client
+  has to be told rather than scripted, and it should be in the README's
+  first screen, not its gotchas.
+- `backends/apple.sh` or `backends/lima.sh` instead of `backends/incus.sh`,
+  per §10.
+- The `.test` DNS domain instead of `.incus` — invisible above the verb layer,
+  which only ever returns a hostname.
+- **No broker.** [#3](https://github.com/dpeckham/my-ai-org/issues/3) step 3
+  exists only because Apple has no remote API and the Paperclip *container*
+  therefore cannot drive boxes. With no Paperclip container, the only process
+  that needs that power is the dispatcher, which is already a host process.
+  Step 3 is Paperclip-edition-only.
+
+## 14. Standing defaults for the two unanswered questions
+
+Neither gates the work, so both get a default that holds until the operator
+moves them. Reversing either is cheap for as long as the verb layer is the only
+thing written.
+
+**macOS backend (question 2) — default: build tier 2 first, tier 1 as the
+destination.** §10 is the argument: the answer is a per-install config, not a
+product fork, so the only real content of the question is ordering, and tier 2
+is the only one that can be written without hardware we do not have. This also
+removes the uncomfortable position where a Mac client is blocked on the
+operator finding a Mac.
+
+**Tier 0, no container (question 3) — default: document the risk, do not ship
+the backend.** Worth knowing before deciding: tier 0 is the *null*
+implementation of the verb layer — `box_create` is `mkdir`, `box_exec` is a
+subshell, `capacity` is free disk — perhaps thirty lines. So the decision is
+not "is it worth the engineering", it is purely "do we endorse it", and the
+engineering cost cannot be used to dodge the question. The default is the
+cautious half: the README states plainly what an agent with no sandbox can
+reach (the user's whole `$HOME`, their keychain, their forwarded SSH agent, and
+every credential any of it holds), and we do not ship a backend that makes it
+one flag away. A client who does it anyway has been told; a client who is
+handed it by our installer has been encouraged. Shipping it later is one file.

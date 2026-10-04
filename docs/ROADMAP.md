@@ -138,9 +138,15 @@ dated requirement. See
   [#3](https://github.com/dpeckham/my-ai-org/issues/3), waiting on someone
   with Apple silicon. Step 1 of that issue (the backend verb layer) is a
   Linux-only refactor and can start any time. **Now load-bearing, not
-  optional:** a Mac-only client has no LXC, so Apple's `container` is their
-  only backend, and access to a Mac with macOS 26 on Apple silicon is an
-  escalation for the operator rather than a background wish.
+  optional:** a Mac-only client has no LXC, and access to a Mac with macOS 26
+  on Apple silicon is an escalation for the operator rather than a background
+  wish.
+- **But Apple silicon is no longer the only route to a Mac client.** The
+  standing default since 2026-10-04 is to write the Lima-class Linux VM backend
+  first — it runs the existing Incus install unchanged, works on Intel and
+  older macOS, and needs no hardware we do not have — with Apple's runtime as
+  the intended destination behind the same verbs. See
+  [briefs/agent-runtime.md](briefs/agent-runtime.md) §10 and §14.
 - The first-run experience judged by someone who did not write it.
 
 ### M5 — The fleet stays current
@@ -184,15 +190,29 @@ The operator has not contradicted that, and reversing it is one word.
   (see M3).
 - Dogfooded on this repo, GitHub-native, with the same agents and skills.
 
-**Open research, not yet decided:**
+**Refined by [0005](decisions/0005-coordination-state-lives-in-the-github-thread.md):**
 [briefs/agent-runtime.md](briefs/agent-runtime.md) takes the runtime apart —
-triggers, the wake, and the four kinds of context an agent points at — and
-proposes four refinements to 0004 plus a macOS picture. The one that reaches
-back into this list: **step 1 of [#3](https://github.com/dpeckham/my-ai-org/issues/3),
-the backend verb layer, is the seam this milestone's dispatcher needs on either
-platform.** It is shared with M4, it is a Linux-only refactor, and it needs no
-Mac — so it is the first thing anyone can usefully do here. Awaiting the
-operator's answers to questions 5-7 in [STATE.md](STATE.md).
+triggers, the wake, and the four kinds of context an agent points at. Its
+central proposal is now decided: **coordination state lives in the GitHub
+thread**, so the box holds nothing durable and a run can resume on any machine.
+Three things that reach back into this list:
+
+- **Step 1 of [#3](https://github.com/dpeckham/my-ai-org/issues/3), the backend
+  verb layer, is the seam this milestone's dispatcher needs on either
+  platform**, and 0005 made it load-bearing rather than merely useful: with no
+  state in the box, the backend is a per-install config and that layer is where
+  the choice lives. Shared with M4, a Linux-only refactor, needs no Mac — the
+  first thing anyone can usefully do here.
+- **The verb layer must carry stdin in and stream stdout out of `box_exec`.**
+  The dispatcher needs no eighth verb if it does, and retrofitting it later is
+  awkward (brief §12).
+- **The worktree is created inside the box, not mounted into it.** The `agents`
+  Incus project refuses host-path disks by design, so the Paperclip pattern of
+  staging a run directory on the host does not port. Each box keeps a bare
+  mirror of the repo and adds a worktree per run — a cache, not state.
+
+Still running on standing defaults rather than decisions: the two macOS
+questions, 5 and 6 in [STATE.md](STATE.md).
 
 **Done when:** one feature travels the full pipeline on this repo with no
 Paperclip running, and the operator answers one agent question by email.

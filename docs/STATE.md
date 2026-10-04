@@ -63,6 +63,15 @@ By the operator, 2026-10-04:
   rejected because it accepts only a classic PAT. Recorded in
   [decisions/0004](decisions/0004-github-native-is-the-single-project-edition.md),
   now M6 in the roadmap.
+- **Coordination state lives in the GitHub thread**, not in a file in the box —
+  one bot comment per issue, edited in place, carrying the cursor, the holder
+  and the run log ("take the portability"). The box becomes disposable and a
+  run can resume on any machine. Recorded in
+  [decisions/0005](decisions/0005-coordination-state-lives-in-the-github-thread.md).
+  Its largest consequence is not portability but that it **demotes the macOS
+  backend from a product decision to a per-install config** behind the verb
+  layer: if nothing durable lives in the box, nothing in the pipeline depends
+  on what the box is.
 - **Still open, by omission:** whether M1 comes before that work. The brief's
   recommendation (yes) stands as the default and is cheapest to reverse before
   the port is extracted.
@@ -85,10 +94,15 @@ Settled by observation rather than by asking:
   one-hour token per run; role context resolves only at the default branch) and
   three roadmap consequences ([#3](https://github.com/dpeckham/my-ai-org/issues/3)
   step 1 is on M6's critical path, #3's broker drops out of this edition, and
-  macOS needs an answer for Macs that cannot run Apple's runtime). On branch
+  macOS needs an answer for Macs that cannot run Apple's runtime). **Its
+  central question is now answered and promoted to
+  [0005](decisions/0005-coordination-state-lives-in-the-github-thread.md);**
+  §10-§14, written after that answer, specify the state comment, the dispatcher
+  loop, what each platform's install actually contains, and the standing
+  defaults for the two questions the operator left open. On branch
   `pm/github-native-edition-brief` in
-  [PR #12](https://github.com/dpeckham/my-ai-org/pull/12), awaiting answers to
-  questions 5-7 below.
+  [PR #12](https://github.com/dpeckham/my-ai-org/pull/12), awaiting the
+  operator's merge.
 - **This document and [ROADMAP.md](ROADMAP.md)** — the Product Manager
   kickoff, on branch `pm/roadmap-and-state`, in a pull request awaiting the
   operator's merge.
@@ -172,15 +186,21 @@ by observation. What is left:
 4. **Scope of [#2](https://github.com/dpeckham/my-ai-org/issues/2).** Is it
    "re-run the current sync against existing boxes", or a standing reconcile
    loop that detects drift on its own?
-5. **Coordination state in the GitHub thread?** One bot comment per issue,
-   edited in place, holding the cursor, the claim and the handoff log — which
-   is what makes a box disposable and a run resumable on any machine. The
-   alternative is a seen-state file in the box, as the bridge keeps today. See
-   [briefs/agent-runtime.md](briefs/agent-runtime.md) §3.
-6. **macOS: Apple's runtime, or a Linux VM?** Two backends, one blocked on
-   hardware, better kernel isolation and a Mac-native install; or one backend
-   that works on any Mac today, at the cost of a VM and a worse first
-   impression. §6 of the same brief.
-7. **Do we ship a no-container macOS tier with a warning?** It is what a client
-   with an Intel Mac will do anyway: documenting it is harm reduction, shipping
-   it is an endorsement, and the agent would hold the user's whole `$HOME`.
+Two more were answered or defaulted on 2026-10-04. Coordination state in the
+thread is **decided** and has moved to **Decided** above. The two macOS
+questions were left unanswered and now run on standing defaults, which hold
+until the operator moves them and are cheap to reverse while the verb layer is
+the only thing written
+([briefs/agent-runtime.md](briefs/agent-runtime.md) §14):
+
+5. **macOS: Apple's runtime, or a Linux VM? — default: both, Linux VM first.**
+   [0005](decisions/0005-coordination-state-lives-in-the-github-thread.md)
+   turned this from a product fork into a per-install config behind the verb
+   layer, so the only live content is ordering. The Linux VM (tier 2) is the
+   one that needs no Apple silicon, so it goes first and the Mac story becomes
+   "works today"; Apple's runtime stays the intended destination.
+6. **Do we ship a no-container tier with a warning? — default: document the
+   risk, do not ship the backend.** Note for whoever revisits it: tier 0 is the
+   *null* implementation of the verb layer (`box_create` is `mkdir`,
+   `box_exec` is a subshell), so this is purely a question of whether we
+   endorse it, not of engineering cost.
