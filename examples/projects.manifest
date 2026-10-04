@@ -16,3 +16,7 @@ defaults  --prodmgr-adapter claude
 widget    example-org/widget-api example-org/widget-web   # one project, two repos
 blog      example-user/blog       --no-kickoff
 firmware  example-org/firmware    --prodmgr-adapter codex --egress agent
+
+# A client's repo you contribute to but don't own: a Product Manager Liaison
+# leads, and the team works only on your assignments there.
+client-app  client-org/app        --type liaison

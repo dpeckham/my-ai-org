@@ -12,16 +12,16 @@
 #                                           (attribution in its SKILL.md and in
 #                                           skills/THIRD_PARTY_NOTICES.md)
 #
-# Roles: chief-of-staff devops cto prodmgr lead-engineer ui-designer coder
-#        qa-lead security
+# Roles: chief-of-staff devops cto prodmgr liaison lead-engineer ui-designer
+#        coder qa-lead security
 #
 # To bump a pinned skill, change the commit and re-run. Removing a line stops
 # it being attached to new agents but does not detach it from existing ones.
 
 coding-practices  github:dbaggott/claude-plugins/dnbg-practices/skills/coding-practices@9a4c0b72c83ac8307d66338808f32077a923136c  lead-engineer coder qa-lead security cto
-team-workflow     local:skills/team-workflow   chief-of-staff prodmgr lead-engineer ui-designer coder qa-lead security cto
+team-workflow     local:skills/team-workflow   chief-of-staff prodmgr liaison lead-engineer ui-designer coder qa-lead security cto
 github-bot        local:skills/github-bot      prodmgr lead-engineer ui-designer qa-lead security cto
-issue-writing     local:skills/issue-writing   prodmgr lead-engineer cto
-spec-review       local:skills/spec-review     prodmgr lead-engineer
+issue-writing     local:skills/issue-writing   prodmgr liaison lead-engineer cto
+spec-review       local:skills/spec-review     prodmgr liaison lead-engineer
 pull-requests     local:skills/pull-requests   coder
 code-review       local:skills/code-review     lead-engineer ui-designer qa-lead security cto

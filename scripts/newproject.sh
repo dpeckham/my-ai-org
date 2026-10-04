@@ -13,11 +13,21 @@
 #   2. host key     Paperclip learns the box's SSH host key
 #   3. checkouts    the repos, cloned in the Paperclip container -- see below
 #   4. environment  Paperclip SSH environment "<name>" -> px-<name>
-#   5. team         Product Manager, Lead Engineer, UI Designer, Coder, QA Lead,
-#                   Security: "<Name> <Role>", all running on the box
-#   6. project      Paperclip project "<name>", Product Manager as lead, one workspace per repo
-#   7. kickoff      first issue for the Product Manager: learn the repo, write the roadmap
+#   5. team         Product Manager (or Product Manager Liaison), Lead Engineer,
+#                   UI Designer, Coder, QA Lead, Security: "<Name> <Role>", all
+#                   running on the box
+#   6. project      Paperclip project "<name>", the lead as lead, one workspace per repo
+#   7. kickoff      first issue for the lead: learn the repo, write the roadmap
+#                   (or, for a Liaison, the client brief)
 #   8. GitHub watch how often the GitHub bridge polls this project's repos
+#
+# Two types of project (--type):
+#   product-manager  the operator owns the repos; a Product Manager decides what
+#                    gets built (the default)
+#   liaison          someone else owns the repos and the operator contributes
+#                    to them; a Product Manager Liaison takes the owner's intent
+#                    as given and manages only the operator's own assignments.
+#                    The bridge watches only the operator's issues and PRs.
 #
 # Why two checkouts: Paperclip's SSH driver does not run agents in a directory
 # that already exists on the box. Each run uploads the project workspace from
@@ -44,13 +54,17 @@ Usage: scripts/newproject.sh <name> <org/repo> [<org/repo>...] [options]
        scripts/newproject.sh --check | --capacity | --help
 
 Options:
+  --type product-manager|liaison      who leads the project (default: product-manager).
+                                      liaison: the repos belong to someone else and
+                                      the team works only on the operator's assignments
   --company NAME|ID         Paperclip company (default: the only one)
-  --prodmgr-adapter claude|codex      Product Manager runtime (default: claude)
+  --prodmgr-adapter claude|codex      the lead's runtime, Product Manager or Liaison (default: claude)
   --prodmgr-model MODEL               adapter model (default: the adapter's own default)
-  --prodmgr-instructions FILE         AGENTS.md template (default: templates/product-manager.md)
+  --prodmgr-instructions FILE         AGENTS.md template (default: templates/product-manager.md,
+                                      or templates/product-manager-liaison.md for --type liaison)
   --team-adapter claude|codex         runtime for the rest of the team (default: claude)
-  --reports-to NAME|ID                Product Manager's manager (default: the company's CEO, if any)
-  --budget DOLLARS                    monthly budget for the Product Manager (default: none set)
+  --reports-to NAME|ID                the lead's manager (default: the company's CEO, if any)
+  --budget DOLLARS                    monthly budget for the lead (default: none set)
   --egress agent            passed to newbox.sh
   --no-auth                 passed to newbox.sh
   --no-kickoff              skip the kickoff issue
@@ -64,13 +78,14 @@ EOF
 MODE=run
 NAME=""; REPOS=()
 COMPANY=""; TEAM_ADAPTER=claude; PRODMGR_ADAPTER=claude; PRODMGR_MODEL=""; REPORTS_TO=""; BUDGET=""
-PRODMGR_TEMPLATE="$ROOT/templates/product-manager.md"
+PRODMGR_TEMPLATE=""; TYPE=product-manager
 NEWBOX_ARGS=(); KICKOFF=1; DRY=0; WATCH_EVERY=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
     --check) MODE=check; shift ;;
     --capacity) MODE=capacity; shift ;;
+    --type) TYPE="${2:?}"; shift 2 ;;
     --company) COMPANY="${2:?}"; shift 2 ;;
     --prodmgr-adapter) PRODMGR_ADAPTER="${2:?}"; shift 2 ;;
     --team-adapter) TEAM_ADAPTER="${2:?}"; shift 2 ;;
@@ -167,9 +182,16 @@ preflight
 [[ -n "$NAME" ]] || { usage; exit 1; }
 [[ "$NAME" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "name must be lowercase letters, digits and dashes"
 [[ ${#REPOS[@]} -gt 0 ]] || die "give at least one org/repo"
+case "$TYPE" in
+  product-manager) LEAD_KEY=prodmgr; LEAD_LABEL="Product Manager"
+                   : "${PRODMGR_TEMPLATE:=$ROOT/templates/product-manager.md}" ;;
+  liaison)         LEAD_KEY=liaison; LEAD_LABEL="Product Manager Liaison"
+                   : "${PRODMGR_TEMPLATE:=$ROOT/templates/product-manager-liaison.md}" ;;
+  *) die "--type is product-manager or liaison" ;;
+esac
 case "$PRODMGR_ADAPTER" in claude|codex) ;; *) die "--prodmgr-adapter is claude or codex" ;; esac
 case "$TEAM_ADAPTER" in claude|codex) ;; *) die "--team-adapter is claude or codex" ;; esac
-[[ -f "$PRODMGR_TEMPLATE" ]] || die "no Product Manager template at $PRODMGR_TEMPLATE"
+[[ -f "$PRODMGR_TEMPLATE" ]] || die "no $LEAD_LABEL template at $PRODMGR_TEMPLATE"
 ADAPTER_TYPE="${PRODMGR_ADAPTER}_local"
 WATCH_SECS=""
 if [[ -n "$WATCH_EVERY" ]]; then
@@ -186,7 +208,7 @@ if [[ -n "$WATCH_EVERY" ]]; then
   (( WATCH_SECS == 0 || WATCH_SECS >= 60 )) || { info "note: --watch-every below 1m is rounded up to 1m"; WATCH_SECS=60; }
 fi
 HOSTALIAS="px-$NAME"
-AGENT_NAME="${NAME^} Product Manager"
+AGENT_NAME="${NAME^} $LEAD_LABEL"
 [[ $DRY -eq 1 ]] && info "dry run: nothing will be changed"
 
 # ------------------------------------------------------------------- 1. box
@@ -286,8 +308,8 @@ fi
 
 # --------------------------------------------------------------- 5. the team
 # Six agents per project, all running on the box through the environment. The
-# Product Manager leads the project; the process they follow is the
-# team-workflow skill. ensure_agent (scripts/lib/paperclip.sh) creates each one
+# Product Manager (or, for --type liaison, the Product Manager Liaison) leads
+# the project; the process they follow is the team-workflow skill. ensure_agent (scripts/lib/paperclip.sh) creates each one
 # or brings it into line, upgrading its instructions from templates/ while they
 # are still the ones this repo wrote.
 step "5. Team"
@@ -300,7 +322,14 @@ else
   MANAGER_ID=$(jq -r '[.[] | select(.role == "ceo")][0].id // empty' <<<"$AGENTS")
 fi
 MANAGER_NAME=$(jq -r --arg id "${MANAGER_ID:-none}" '.[] | select(.id == $id) | .name' <<<"$AGENTS")
-[[ -n "$MANAGER_ID" ]] || info "note: no CEO in the company; the Product Manager reports to nobody (use --reports-to)"
+[[ -n "$MANAGER_ID" ]] || info "note: no CEO in the company; the $LEAD_LABEL reports to nobody (use --reports-to)"
+
+# A project's type is fixed when it is created: switching would hire a second
+# lead next to the first. The bridge tells the types apart by which lead the
+# project has (metadata role prodmgr or liaison).
+OTHER_LEAD="${NAME^} Product Manager Liaison"; [[ "$TYPE" == liaison ]] && OTHER_LEAD="${NAME^} Product Manager"
+jq -e --arg n "$OTHER_LEAD" 'any(.[]; (.name | ascii_downcase) == ($n | ascii_downcase))' <<<"$AGENTS" >/dev/null \
+  && die "$NAME already has a $OTHER_LEAD; it was not created as --type $TYPE"
 
 PROJECT="$NAME"
 REPOS_MD=""
@@ -310,12 +339,12 @@ BUDGET_CENTS=0; [[ -n "$BUDGET" ]] && BUDGET_CENTS=$(awk -v d="$BUDGET" 'BEGIN {
 
 # key | display name | Paperclip role | template | manager key
 TEAM=(
-  "prodmgr|Product Manager|pm|$PRODMGR_TEMPLATE|"
-  "lead-engineer|Lead Engineer|engineer|$ROOT/templates/lead-engineer.md|prodmgr"
-  "ui-designer|UI Designer|designer|$ROOT/templates/ui-designer.md|prodmgr"
+  "$LEAD_KEY|$LEAD_LABEL|pm|$PRODMGR_TEMPLATE|"
+  "lead-engineer|Lead Engineer|engineer|$ROOT/templates/lead-engineer.md|$LEAD_KEY"
+  "ui-designer|UI Designer|designer|$ROOT/templates/ui-designer.md|$LEAD_KEY"
   "coder|Coder|engineer|$ROOT/templates/coder.md|lead-engineer"
-  "qa-lead|QA Lead|qa|$ROOT/templates/qa-lead.md|prodmgr"
-  "security|Security|security|$ROOT/templates/security.md|prodmgr"
+  "qa-lead|QA Lead|qa|$ROOT/templates/qa-lead.md|$LEAD_KEY"
+  "security|Security|security|$ROOT/templates/security.md|$LEAD_KEY"
 )
 declare -A TEAM_ID=()
 for member in "${TEAM[@]}"; do
@@ -326,21 +355,21 @@ for member in "${TEAM[@]}"; do
       && info "$aname: exists" || info "$aname: would hire"
     continue
   fi
-  if [[ "$key" == prodmgr ]]; then
+  if [[ "$key" == "$LEAD_KEY" ]]; then
     A_ADAPTER="${PRODMGR_ADAPTER}_local"; A_MANAGER="$MANAGER_ID"; model="$PRODMGR_MODEL"
   else
     A_ADAPTER="${TEAM_ADAPTER}_local"; A_MANAGER="${TEAM_ID[$mgr_key]:-}"; model=""
   fi
   A_COMPANY="$COMPANY_ID" A_NAME="$aname" A_ROLE_KEY="$key" A_ROLE="$prole" \
   A_TITLE="$label, $NAME" A_TEMPLATE="$template" A_ENV="$ENV_ID" A_PROJECT="$NAME" \
-  A_BUDGET="$([[ "$key" == prodmgr ]] && echo "$BUDGET_CENTS" || echo 0)" \
+  A_BUDGET="$([[ "$key" == "$LEAD_KEY" ]] && echo "$BUDGET_CENTS" || echo 0)" \
   A_EXTRA="$(jq -n --arg m "$model" 'if $m == "" then {} else {model: $m} end')" \
   A_ADAPTER="$A_ADAPTER" A_MANAGER="$A_MANAGER"
   export A_COMPANY A_NAME A_ROLE_KEY A_ROLE A_TITLE A_TEMPLATE A_ENV A_PROJECT A_BUDGET A_EXTRA A_ADAPTER A_MANAGER
   TEAM_ID[$key]=$(ensure_agent)
 done
-AGENT_ID="${TEAM_ID[prodmgr]:-}"
-[[ $DRY -eq 1 ]] || info "Product Manager reports to ${MANAGER_NAME:-nobody}"
+AGENT_ID="${TEAM_ID[$LEAD_KEY]:-}"
+[[ $DRY -eq 1 ]] || info "$LEAD_LABEL reports to ${MANAGER_NAME:-nobody}"
 
 # ---------------------------------------------------------------- 6. project
 step "6. Project $NAME"
@@ -357,9 +386,9 @@ elif [[ $DRY -eq 1 ]]; then
   info "would create: lead $AGENT_NAME, workspaces ${REPOS[*]} (primary ${REPOS[0]})"
 else
   body=$(jq -n --arg n "$NAME" --arg lead "$AGENT_ID" --argjson ws "$(workspace_json "${REPOS[0]}" true)" \
-    --arg repos "${REPOS[*]}" '{
+    --arg repos "${REPOS[*]}" --arg t "$TYPE" '{
       name: $n, status: "planned", leadAgentId: $lead, workspace: $ws,
-      description: "Repos: \($repos). Container: px-\($n). Created by newproject.sh."}')
+      description: "Repos: \($repos). Container: px-\($n). Type: \($t). Created by newproject.sh."}')
   PROJECT_ID=$(api POST "/companies/$COMPANY_ID/projects" "$body" | jq -r .id)
   info "created ($PROJECT_ID), primary workspace ${REPOS[0]}"
   for r in "${REPOS[@]:1}"; do
@@ -370,22 +399,34 @@ fi
 
 # ---------------------------------------------------------------- 7. kickoff
 # idempotencyKey makes a re-run return the same issue rather than a second one.
-# Assigning it with status todo wakes the Product Manager immediately.
+# Assigning it with status todo wakes the lead immediately.
 step "7. Kickoff issue"
-if [[ $KICKOFF -eq 0 ]]; then
-  info "skipped (--no-kickoff)"
-elif [[ $DRY -eq 1 ]]; then
-  info "would assign \"Kickoff: learn $NAME and write its roadmap\" to $AGENT_NAME"
+if [[ "$TYPE" == liaison ]]; then
+  KICKOFF_TITLE="Kickoff: learn $NAME and write its client brief"
+  KICKOFF_DESC="You are the new Product Manager Liaison for **$NAME**, a project the operator contributes to but does not own. Before taking on any assignment:
+
+1. Read the repos (${REPOS[*]}): README, CONTRIBUTING, CLAUDE.md / AGENTS.md, docs, roadmap or ADRs, issue and PR templates, CODEOWNERS, labels and milestones, and how recent pull requests were reviewed.
+2. Write the client brief described in your instructions, as a new Paperclip issue in this project titled \"Client brief: $NAME\", assigned to yourself with status \`backlog\`.
+3. List the GitHub issues and pull requests currently assigned to or opened by the operator, and comment here with that list, what you would take on first, and anything in the brief you are unsure of.
+
+Do not change anything on GitHub in this issue."
 else
-  desc="You are the new Product Manager for **$NAME**. Before planning anything:
+  KICKOFF_TITLE="Kickoff: learn $NAME and write its roadmap"
+  KICKOFF_DESC="You are the new Product Manager for **$NAME**. Before planning anything:
 
 1. Read the repos (${REPOS[*]}): README, CLAUDE.md / AGENTS.md, docs, recent history, open issues and PRs.
 2. Write \`docs/ROADMAP.md\` and \`docs/STATE.md\` as described in your instructions (or update the repo's existing equivalents).
 3. Open a pull request with them, and comment here with the PR link plus the three things you think matter most next and any questions for the operator.
 
 Do not start implementation work in this issue."
-  body=$(jq -n --arg p "$PROJECT_ID" --arg a "$AGENT_ID" --arg n "$NAME" --arg d "$desc" '{
-    title: "Kickoff: learn \($n) and write its roadmap", description: $d,
+fi
+if [[ $KICKOFF -eq 0 ]]; then
+  info "skipped (--no-kickoff)"
+elif [[ $DRY -eq 1 ]]; then
+  info "would assign \"$KICKOFF_TITLE\" to $AGENT_NAME"
+else
+  body=$(jq -n --arg p "$PROJECT_ID" --arg a "$AGENT_ID" --arg n "$NAME" --arg t "$KICKOFF_TITLE" --arg d "$KICKOFF_DESC" '{
+    title: $t, description: $d,
     projectId: $p, assigneeAgentId: $a, status: "todo", priority: "high",
     idempotencyKey: "newproject:\($n):kickoff"}')
   issue=$(api POST "/companies/$COMPANY_ID/issues" "$body")

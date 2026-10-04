@@ -15,9 +15,24 @@
 //   failed CI run on the default branch       ->  issue for the Lead Engineer
 //   new Dependabot alert                      ->  issue for Security
 //
+// Liaison projects (newproject.sh --type liaison: the repos belong to someone
+// else, and the operator contributes) see only the operator's own work:
+//
+//   issue or PR assigned to or opened by the  ->  issue for the Product Manager Liaison
+//     operator, not yet tracked                   (the operator's own PRs: Lead Engineer)
+//   tracked item reassigned to someone else,  ->  comment on the Paperclip issue tracking it
+//     closed or merged
+//   human comment on a tracked issue or PR    ->  comment on the Paperclip issue tracking it
+//   failed CI on the operator's PRs           ->  comment on the Paperclip issue tracking it
+//
+// Everything else on those repos (other people's issues, comments on them, CI
+// on the default branch, Dependabot) belongs to the owner and is ignored. A
+// project is a Liaison project when its lead has metadata role "liaison".
+//
 // "Human" means not a bot account and not an agent: agents sign their GitHub
-// posts with a bold role header (**Coder**, **QA Lead review**, ...), which
-// matters because the Coder posts as the operator's own account.
+// posts with a bold role header (**Coder**, **QA Lead review**, ...) or, on
+// Liaison projects, a hidden <!-- agent: Coder --> marker, which matters
+// because the Coder (and the Liaison) post as the operator's own account.
 //
 // Config:  ~/.config/my-ai-org/bridge.json
 //   { "defaultIntervalSec": 300, "projects": { "<name>": { "intervalSec": 300 } } }
@@ -42,6 +57,8 @@ const SINCE_ARG = (() => { const i = process.argv.indexOf("--since"); return i >
 if (SINCE_ARG && isNaN(Date.parse(SINCE_ARG))) { console.error(`--since: not a date: ${SINCE_ARG}`); process.exit(2); }
 const OVERLAP_MS = 120_000; // re-read a little of the last window; dedupe absorbs it
 const AGENT_HEADER = /^\s*\*\*(Coder|Product Manager|Lead Engineer|UI Designer|QA Lead|Security|CTO)\b/;
+const AGENT_MARKER = /<!--\s*agent:/i;
+const isAgentPost = (body) => AGENT_HEADER.test(body ?? "") || AGENT_MARKER.test(body ?? "");
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const readJson = (p, d) => { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return d; } };
@@ -79,6 +96,11 @@ async function gh(path, { optional = false } = {}) {
   return res.json();
 }
 
+// The operator: whoever the gh token belongs to. Fetched once, when a Liaison
+// project first needs it.
+let operator;
+const operatorLogin = async () => (operator ??= (await gh("/user")).login);
+
 // ---------------------------------------------------------------- routing
 const isBot = (user) => !user || user.type === "Bot" || /\[bot\]$/.test(user.login ?? "");
 const excerpt = (s, n = 600) => {
@@ -88,7 +110,7 @@ const excerpt = (s, n = 600) => {
 const quote = (s) => excerpt(s).split("\n").map((l) => "> " + l).join("\n");
 
 function createIssue(ctx, { key, assignee, title, description, priority = "medium" }) {
-  const agent = ctx.agents[assignee] ?? ctx.agents.prodmgr;
+  const agent = ctx.agents[assignee] ?? ctx.lead;
   const body = {
     title: title.slice(0, 250), description, projectId: ctx.project.id, priority,
     status: agent ? "todo" : "backlog", assigneeAgentId: agent?.id,
@@ -108,14 +130,18 @@ async function trackingIssue(ctx, url) {
   return open.find((i) => (i.description ?? "").includes(url) || (i.title ?? "").includes(url));
 }
 
+async function commentOn(ctx, where, body, what) {
+  if (DRY) { log(`[dry-run] ${ctx.project.name}: comment on ${where.identifier}: ${what}`); return; }
+  await pc("POST", `/issues/${where.id}/comments`, { body });
+  log(`${ctx.project.name}: comment on ${where.identifier}: ${what}`);
+}
+
 async function routeComment(ctx, repo, c, itemUrl, itemTitle) {
   const where = await trackingIssue(ctx, itemUrl);
   const text = `Human comment on GitHub from @${c.user.login}: ${c.html_url}\n\n${quote(c.body)}`;
   if (where) {
-    if (DRY) { log(`[dry-run] ${ctx.project.name}: comment on ${where.identifier}: ${c.html_url}`); return; }
-    await pc("POST", `/issues/${where.id}/comments`, { body: text });
-    log(`${ctx.project.name}: comment on ${where.identifier} from @${c.user.login}`);
-  } else {
+    await commentOn(ctx, where, text, `from @${c.user.login}`);
+  } else if (!ctx.liaison) {
     await createIssue(ctx, {
       key: `${repo}:comment:${c.id}`, assignee: "prodmgr",
       title: `GitHub comment needs attention: ${itemTitle}`,
@@ -166,7 +192,7 @@ async function pollRepo(ctx, repo, rs) {
     ...(await gh(`/repos/${repo}/pulls/comments?sort=created&direction=asc&since=${sinceIso}&per_page=100`)),
   ];
   for (const c of comments) {
-    if (!after(c.created_at) || isBot(c.user) || AGENT_HEADER.test(c.body ?? "")) continue;
+    if (!after(c.created_at) || isBot(c.user) || isAgentPost(c.body)) continue;
     if (!fresh(`comment:${c.id}`)) continue;
     const itemUrl = (c.html_url ?? "").replace(/#.*$/, "");
     await routeComment(ctx, repo, c, itemUrl, itemUrl.split("/").slice(-2).join(" #"));
@@ -203,6 +229,102 @@ async function pollRepo(ctx, repo, rs) {
   for (const [k, t] of Object.entries(seen)) if (t < cutoff) delete seen[k];
 }
 
+// A Liaison project: only the operator's own assignments, issues and PRs.
+// The issues endpoint with `since` returns everything *updated* since then,
+// which catches new items, items newly assigned to the operator, and changes
+// to items already tracked, in one call.
+async function pollLiaisonRepo(ctx, repo, rs) {
+  const me = await operatorLogin();
+  const since = new Date(rs.since);
+  const sinceIso = new Date(since.getTime() - OVERLAP_MS).toISOString();
+  const seen = (rs.seen ??= {});
+  const fresh = (key) => { if (seen[key]) return false; seen[key] = Date.now(); return true; };
+  const after = (t) => new Date(t) > since;
+  // Issues last seen as the operator's, so moving away from them is noticed
+  // (and an issue that was never theirs isn't reported as "reassigned").
+  const ours = (rs.ours ??= {});
+
+  const items = await gh(`/repos/${repo}/issues?state=all&sort=updated&direction=desc&since=${sinceIso}&per_page=100`);
+  for (const it of items) {
+    if (!after(it.updated_at)) continue;
+    const assignees = (it.assignees ?? []).map((a) => a.login);
+    const mine = assignees.includes(me) || (it.user?.login === me && !assignees.length);
+    const kind = it.pull_request ? "PR" : "issue";
+    const wasMine = !!ours[it.number];
+    if (mine) ours[it.number] = Date.now(); else delete ours[it.number];
+    const where = await trackingIssue(ctx, it.html_url);
+    if (where) {
+      // Changes the team must react to: the work went to someone else, or ended.
+      // Only issues: teams use PR assignees for all sorts of things (reviewers,
+      // whoever merges), so a PR's assignee says little about whose work it is.
+      if (!it.pull_request && wasMine && !mine) {
+        const who = assignees.length ? `now assigned to ${assignees.map((a) => "@" + a).join(", ")}` : "no longer assigned to anyone";
+        await commentOn(ctx, where, `${it.html_url}\n\nThis ${kind} is ${who}, not the operator. ` +
+          `Stop work on it unless the operator says otherwise.`, `reassigned`);
+      }
+      if (it.state === "closed" && fresh(`closed:${it.number}`)) {
+        const merged = it.pull_request?.merged_at;
+        await commentOn(ctx, where, `${it.html_url}\n\nThis ${kind} was ${merged ? "merged" : "closed"} on GitHub` +
+          `${it.closed_by && !merged ? ` by @${it.closed_by.login}` : ""}.`, merged ? "merged" : "closed");
+      }
+      continue;
+    }
+    if (!mine || it.state !== "open" || isBot(it.user)) continue;
+    if (it.pull_request) {
+      // The Coder's own PRs carry the marker (or the `agent` label); they're
+      // tracked as soon as the Coder records the URL.
+      if (isAgentPost(it.body) || (it.labels ?? []).some((l) => l.name === "agent")) continue;
+      if (!fresh(`pr:${it.number}`)) continue;
+      await createIssue(ctx, {
+        key: `${repo}:pr:${it.number}`, assignee: "lead-engineer",
+        title: `Review PR: ${it.title}`,
+        description: `${it.html_url}\n\nA pull request by the operator (@${it.user.login}), opened by hand. ` +
+          `Review it through the pipeline (team-workflow) starting with the Lead Engineer. ` +
+          `Reviews stay on this Paperclip issue; nothing is posted to GitHub.\n\n${quote(it.body)}`,
+      });
+    } else {
+      if (!fresh(`assignment:${it.number}`)) continue;
+      const how = assignees.includes(me) ? "assigned to the operator" : "opened by the operator";
+      await createIssue(ctx, {
+        key: `${repo}:assignment:${it.number}`, assignee: "liaison",
+        title: `Assignment: ${it.title}`,
+        description: `${it.html_url}\n\nA GitHub issue ${how} (@${me}). Work out what the owner wants from the ` +
+          `issue and the client brief, then take it into the pipeline, or ask the operator for what's missing.\n\n${quote(it.body)}`,
+      });
+    }
+  }
+
+  // Human comments, only on issues and PRs the team is tracking.
+  const comments = [
+    ...(await gh(`/repos/${repo}/issues/comments?sort=created&direction=asc&since=${sinceIso}&per_page=100`)),
+    ...(await gh(`/repos/${repo}/pulls/comments?sort=created&direction=asc&since=${sinceIso}&per_page=100`)),
+  ];
+  for (const c of comments) {
+    if (!after(c.created_at) || isBot(c.user) || isAgentPost(c.body)) continue;
+    const itemUrl = (c.html_url ?? "").replace(/#.*$/, "").replace(/\/files$/, "");
+    if (!(await trackingIssue(ctx, itemUrl)) || !fresh(`comment:${c.id}`)) continue;
+    await routeComment(ctx, repo, c, itemUrl, itemUrl.split("/").slice(-2).join(" #"));
+  }
+
+  // Failed CI on the operator's own PRs (the Coder pushes as the operator).
+  // Fork PRs carry no pull_requests link on the run, so they're missed here;
+  // the QA Lead checks CI in the pipeline anyway.
+  const runs = await gh(`/repos/${repo}/actions/runs?actor=${encodeURIComponent(me)}&event=pull_request&status=failure&per_page=20`, { optional: true });
+  for (const r of runs?.workflow_runs ?? []) {
+    if (!after(r.created_at)) continue;
+    for (const pr of r.pull_requests ?? []) {
+      const where = await trackingIssue(ctx, `https://github.com/${repo}/pull/${pr.number}`);
+      if (!where || !fresh(`ci:${r.workflow_id}:${r.head_sha}`)) continue;
+      await commentOn(ctx, where, `${r.html_url}\n\nCI "${r.name}" failed on PR #${pr.number} at ${r.head_sha.slice(0, 12)}.`, `CI failed`);
+    }
+  }
+
+  const cutoff = Date.now() - 30 * 86_400_000;
+  for (const [k, t] of Object.entries(seen)) if (t < cutoff) delete seen[k];
+  // Long-lived assignments go quiet for months; keep these much longer.
+  for (const [k, t] of Object.entries(ours)) if (t < Date.now() - 365 * 86_400_000) delete ours[k];
+}
+
 // ------------------------------------------------------------------- main
 async function main() {
   if (!ghToken) { log("no GitHub token (gh auth token failed); nothing to do"); return; }
@@ -226,7 +348,8 @@ async function main() {
       const m = a.metadata?.myAiOrg;
       if (m?.project === project.name && m.role) agents[m.role] = a;
     }
-    const ctx = { companyId, project, agents };
+    const lead = agents.prodmgr ?? agents.liaison;
+    const ctx = { companyId, project, agents, lead, liaison: !agents.prodmgr && !!agents.liaison };
     for (const repo of repos) {
       const rs = (state.repos[repo] ??= {});
       if (SINCE_ARG) { rs.since = new Date(SINCE_ARG).toISOString(); rs.lastPoll = 0; }
@@ -234,7 +357,7 @@ async function main() {
       if (rs.lastPoll && now - rs.lastPoll < interval * 1000) continue;
       const started = new Date().toISOString();
       try {
-        await pollRepo(ctx, repo, rs);
+        await (ctx.liaison ? pollLiaisonRepo : pollRepo)(ctx, repo, rs);
         rs.since = started;
         rs.lastPoll = now;
       } catch (e) {

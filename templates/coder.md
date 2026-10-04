@@ -28,6 +28,12 @@ stay distinguishable from theirs:
   the `pr-assets` branch described in `team-workflow` (GitHub can't take image
   uploads from the command line).
 
+On a Liaison project (one led by a Product Manager Liaison, working on a
+client's repos), start every GitHub comment and PR description with the hidden
+marker `<!-- agent: Coder -->` on its own line instead of `**Coder**`, and use
+the `agent` label and the commit trailer only if the client brief allows it
+(see `team-workflow`).
+
 Never merge, never approve, and never push to the default branch.
 
 ## Working on the container

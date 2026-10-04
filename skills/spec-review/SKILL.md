@@ -3,7 +3,7 @@ name: spec-review
 description: Review a GitHub issue as a spec before anyone implements it — is it correctly diagnosed, resolvable cold, with runnable acceptance criteria, and does a set of issues hang together — posting one READY / CHANGES REQUESTED verdict per issue per round with finding IDs; and how the issue's author answers such a review. Load when the Lead Engineer is handed a GitHub issue to review before work starts, or asked whether an issue is ready to pick up; and when the Product Manager is handed back spec-review findings to answer. Not for reviewing a pull request — that is `code-review`.
 ---
 
-> Adapted from [`dbaggott/claude-plugins`](https://github.com/dbaggott/claude-plugins) at commit `9a4c0b72c83ac8307d66338808f32077a923136c` (`dnbg-workflow/skills/issue-reviewer/SKILL.md`, `dnbg-workflow/skills/issue-reviewer/references/rounds.md`, `dnbg-workflow/skills/issue-workflow/references/spec-review-rounds.md`), licensed under the Apache License 2.0. Changes: removed the reviewer App setup, token minting, watchers and interactive prompts; rounds now span separate Paperclip runs, post via `gh-bot` with a role header, and hand off by Paperclip reassignment.
+> Adapted from [`dbaggott/claude-plugins`](https://github.com/dbaggott/claude-plugins) at commit `9a4c0b72c83ac8307d66338808f32077a923136c` (`dnbg-workflow/skills/issue-reviewer/SKILL.md`, `dnbg-workflow/skills/issue-reviewer/references/rounds.md`, `dnbg-workflow/skills/issue-workflow/references/spec-review-rounds.md`), licensed under the Apache License 2.0. Changes: removed the reviewer App setup, token minting, watchers and interactive prompts; rounds now span separate Paperclip runs, post via `gh-bot` with a role header, and hand off by Paperclip reassignment; on Liaison projects, rounds are posted to Paperclip instead of GitHub.
 
 # Spec review
 
@@ -20,6 +20,11 @@ handed a PR, or the work resolving the issue, it is `code-review`. Decide from
 what the Paperclip issue asks, not from whether a PR exists yet. If it is
 genuinely unclear, take the spec review and say so in your handoff: it
 terminates, and a wrong guess costs one bounded review.
+
+**On a Liaison project** (led by a Product Manager Liaison; the repos are a
+client's), the spec is the Paperclip issue's description, not a GitHub issue:
+read it there, and post each round as a comment on the Paperclip issue. Use
+plain `gh` to read anything on GitHub, and post nothing there.
 
 ## Before the first round
 

@@ -25,6 +25,10 @@ Pass, or send it back to the Coder with findings they can act on. Post on GitHub
 as the bot (`gh-bot`, see `github-bot`), starting every review with
 `**QA Lead review**`.
 
+On a Liaison project (one led by a Product Manager Liaison, working on a
+client's repos), post nothing on GitHub: your reviews go on the Paperclip
+issue instead. `team-workflow` has the details.
+
 ## Working on the container
 
 You run on the project's own container (`px-{{PROJECT}}`). Each run starts in a

@@ -8,6 +8,11 @@
 # straight away provisions nothing new. Uncomment the repos you want, and put
 # several repos on one line to make them a single project.
 #
+# Repos the login has no admin rights on belong to someone else -- a client
+# whose repos the operator contributes to -- so their lines get --type
+# liaison: a Product Manager Liaison leads, working only on the operator's
+# assignments. Change it on any line where that guess is wrong.
+#
 # local/ is gitignored. The list names real orgs and repos, which this repo
 # never commits; examples/projects.manifest shows the format.
 #
@@ -28,9 +33,9 @@ mkdir -p "$(dirname "$OUT")"
 [[ -e "$OUT" ]] && { echo "$OUT exists; writing $OUT.new instead (diff them, then merge by hand)."; OUT="$OUT.new"; }
 
 # owner, collaborator and org-member repos -- everything the token can clone.
-# TSV: full_name  private  archived  fork  pushed_at
+# TSV: full_name  private  archived  fork  pushed_at  admin
 repos=$(gh api --paginate 'user/repos?per_page=100&affiliation=owner,collaborator,organization_member' \
-  -q '.[] | [.full_name, .private, .archived, .fork, (.pushed_at // "")[0:10]] | @tsv' | sort -f)
+  -q '.[] | [.full_name, .private, .archived, .fork, (.pushed_at // "")[0:10], (.permissions.admin // false)] | @tsv' | sort -f)
 
 # Boxes that already exist stay uncommented, so the manifest matches reality.
 existing=$(pixels list 2>/dev/null | awk 'NR>1 {print $1}' || true)
@@ -48,11 +53,13 @@ dupes=$(cut -f1 <<<"$repos" | awk -F/ '{print tolower($2)}' | sort | uniq -d)
   echo "#   scripts/provision.sh $(realpath --relative-to="$ROOT" "$OUT" 2>/dev/null || echo "$OUT") [--dry-run]"
   echo "# Put several repos on one line to make them one project (one box, one Product Manager)."
   echo "# Lines already uncommented are projects whose box exists."
+  echo "# --type liaison marks repos you can't administer: a client's, led by a Product Manager"
+  echo "# Liaison that works only on your assignments. Drop it where the repo is really yours."
   echo "# Format and options: examples/projects.manifest, scripts/newproject.sh --help."
   echo
   echo "defaults  --prodmgr-adapter claude"
   owner=""
-  while IFS=$'\t' read -r full private archived fork pushed; do
+  while IFS=$'\t' read -r full private archived fork pushed admin; do
     o="${full%%/*}"; r="${full#*/}"
     if [[ "$o" != "$owner" ]]; then
       owner="$o"
@@ -66,7 +73,8 @@ dupes=$(cut -f1 <<<"$repos" | awk -F/ '{print tolower($2)}' | sort | uniq -d)
     [[ "$fork" == true ]] && tags+=(fork)
     [[ -n "$pushed" ]] && tags+=("pushed $pushed")
     prefix="# "; grep -qx "$name" <<<"$existing" && prefix=""
-    printf '%s%-28s %-44s # %s\n' "$prefix" "$name" "$full" "$(IFS=,; echo "${tags[*]}" | sed 's/,/, /g')"
+    type=""; [[ "$admin" == true ]] || type="--type liaison"
+    printf '%s%-28s %-44s %-16s # %s\n' "$prefix" "$name" "$full" "$type" "$(IFS=,; echo "${tags[*]}" | sed 's/,/, /g')"
   done <<<"$repos"
 } > "$OUT"
 

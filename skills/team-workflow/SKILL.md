@@ -1,6 +1,6 @@
 ---
 name: team-workflow
-description: How a feature moves through a project team in this company — Product Manager, Lead Engineer, UI Designer, Coder, QA Lead, Security, then the operator merges — and how to hand work to the next role. Load at the start of every run on a project issue, before acting, and whenever you finish your step and need to pass the work on.
+description: How a feature moves through a project team in this company — Product Manager (or, on a client's repos, Product Manager Liaison), Lead Engineer, UI Designer, Coder, QA Lead, Security, then the operator merges — and how to hand work to the next role. Load at the start of every run on a project issue, before acting, and whenever you finish your step and need to pass the work on.
 ---
 
 # Team workflow
@@ -136,11 +136,46 @@ work within minutes, so you never poll GitHub yourself:
 - **CI failing on the default branch** becomes an issue for the Lead Engineer;
   **a new Dependabot alert**, an issue for Security.
 
+## Liaison projects (the client's repos)
+
+Some projects are led by a **Product Manager Liaison** instead of a Product
+Manager (its agent is named `<Project> Product Manager Liaison`). The repos
+belong to a client, the operator contributes to them like any other developer
+on the client's team, and the team works only on the operator's own
+assignments. Everything above still holds, with these differences, which
+override your own instructions where they disagree:
+
+- **The spec lives on the Paperclip issue.** The GitHub issue is the client's;
+  the Liaison writes the spec on the Paperclip issue, and the Lead Engineer
+  reviews that. Nobody edits the client's issue.
+- **Reviews stay in Paperclip.** The Lead Engineer, UI Designer, QA Lead and
+  Security post their reviews as comments on the Paperclip issue, never on
+  GitHub, and don't use `gh-bot`. The client's own reviewers are the real gate.
+- **Only the Liaison and the Coder post on GitHub**, as the operator's account
+  with plain `gh`. Instead of a bold role header, every comment and PR
+  description starts with a hidden marker on its own line,
+  `<!-- agent: Coder -->` or `<!-- agent: Product Manager Liaison -->`; GitHub
+  doesn't render it, and the bridge uses it to tell agents from the operator.
+  Follow the client brief's AI-disclosure policy (the `Client brief:` issue in
+  the project) for the `agent` label and the commit trailer: leave them off if
+  the client doesn't want them.
+- **Security hands the PR to the operator** as usual, but the client merges.
+  Say whether to mark the PR ready for the client's review, rather than giving
+  a merge command.
+- **Questions for the client go to the operator.** Nobody asks the client
+  anything on GitHub. Comment on the Paperclip issue with the question and a
+  draft ready to paste, and assign it to the operator with status `blocked`;
+  the operator asks, and the client's reply reaches you through the bridge.
+- **The bridge only sees the operator's work** there: issues and PRs assigned
+  to or opened by the operator, human comments on the ones the team tracks,
+  those items being reassigned, closed or merged, and failed CI on the
+  operator's PRs. Nothing is routed for CI on the default branch or Dependabot.
+
 ## When you're stuck
 
 The run is unattended: nobody answers questions mid-run. Decide what you can
 from the issue, the repo and the project's docs. For anything you can't decide —
 scope, product direction, money, anything irreversible or outward-facing —
 comment on the Paperclip issue with the question, your recommendation and the
-options, and assign it to the Product Manager (product questions) or the
-operator (everything above the project).
+options, and assign it to the Product Manager or Liaison (product questions) or
+the operator (everything above the project).

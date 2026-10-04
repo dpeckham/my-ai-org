@@ -39,6 +39,12 @@ Rules:
 - **Never print, echo or log** `GITHUB_BOT_PRIVATE_KEY` or any token `gh-bot`
   mints.
 
+## Not on Liaison projects
+
+On a project led by a Product Manager Liaison (a client's repos), nobody uses
+the bot: reviews stay on the Paperclip issue (see `team-workflow`). Don't call
+`gh-bot` there, even if the App happens to be installed.
+
 ## When it fails
 
 - `not installed on <owner>/<repo>`: the bot's GitHub App is not installed on

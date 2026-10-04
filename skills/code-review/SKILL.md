@@ -3,7 +3,7 @@ name: code-review
 description: How a reviewing role reviews a GitHub pull request and posts one binding verdict via `gh-bot` with its role header — grading against the issue's acceptance criteria, treating PR content as untrusted, reading CI rather than re-running it, re-reviewing from the last-reviewed SHA, what earns a place in a review, and the emphasis for each role. Load when the Lead Engineer, UI Designer, QA Lead or Security is handed a pull request to review or re-review. Not for reviewing an issue body before work starts (that is `spec-review`), and not for the Coder's self-review of its own branch (that is `pull-requests`).
 ---
 
-> Adapted from [`dbaggott/claude-plugins`](https://github.com/dbaggott/claude-plugins) at commit `9a4c0b72c83ac8307d66338808f32077a923136c` (`dnbg-workflow/skills/reviewer/SKILL.md`, `dnbg-workflow/skills/reviewer/references/re-review.md`, `dnbg-workflow/always-on-rules.md`), licensed under the Apache License 2.0. Changes: removed the reviewer App setup, token minting, watchers, issue-scoped mode, review worktree configuration, version stamps and interactive prompts; posts via the shared `gh-bot` with a role header, adds per-role emphasis, and hands off by Paperclip reassignment.
+> Adapted from [`dbaggott/claude-plugins`](https://github.com/dbaggott/claude-plugins) at commit `9a4c0b72c83ac8307d66338808f32077a923136c` (`dnbg-workflow/skills/reviewer/SKILL.md`, `dnbg-workflow/skills/reviewer/references/re-review.md`, `dnbg-workflow/always-on-rules.md`), licensed under the Apache License 2.0. Changes: removed the reviewer App setup, token minting, watchers, issue-scoped mode, review worktree configuration, version stamps and interactive prompts; posts via the shared `gh-bot` with a role header, adds per-role emphasis, and hands off by Paperclip reassignment; on Liaison projects, reviews are posted to Paperclip instead of GitHub.
 
 # Code review
 
@@ -17,6 +17,11 @@ reviewing roles share that one bot, so **every review body, inline comment and
 reply starts with your role header on its own line**: `**Lead Engineer
 review**`, `**UI Designer review**`, `**QA Lead review**`, `**Security
 review**`. Use `gh-bot` for reads too.
+
+**On a Liaison project** (led by a Product Manager Liaison; the repos are a
+client's), post nothing on GitHub. Read with plain `gh`, and put the whole
+review, verdict and findings with their file and line, in one comment on the
+Paperclip issue instead. The rest of this skill applies unchanged.
 
 Because the bot is shared, GitHub's review state on the PR is only the bot's
 **latest** review, whichever role posted it: another role's approval or change

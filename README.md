@@ -200,7 +200,9 @@ the board: you set direction and approve anything irreversible.
   you would.
 - **A team per project:** a Product Manager (what to build and why), Lead
   Engineer, UI Designer, Coder, QA Lead and Security. See **The team and its
-  pipeline**.
+  pipeline**. On a client's repos, which you contribute to but don't own, a
+  **Product Manager Liaison** leads instead and the team works only on your
+  assignments. See **Liaison projects**.
 - **More roles as needed:** marketing, CFO and so on, hired into the org chart
   with their own instructions and budgets.
 
@@ -524,6 +526,57 @@ which is what wakes it.
 - Logs: `journalctl --user -u my-ai-org-github-bridge` in the container (the
   full command is printed by `paperclip-up.sh`).
 
+### Liaison projects: a client's repos
+
+Some repos you don't own: you contribute to them like any other developer on
+someone else's team, and they decide what gets built. Start those with
+`newproject.sh --type liaison` (or `--type liaison` on the manifest line). The
+team is the same, but it's led by a **Product Manager Liaison** and works only
+on **your assignments** there.
+
+- **The Liaison takes the client's intent as given.** It learns what the
+  client wants from what they wrote down (README, CONTRIBUTING, docs, roadmap,
+  templates, CODEOWNERS, labels and milestones, how their reviewers treat PRs)
+  and keeps that as a **client brief**: a Paperclip issue, `Client brief:
+  <name>`, which the kickoff creates. The brief also records the client's
+  policy on AI-assisted contributions.
+- **Each assignment becomes a spec on the Paperclip issue**, written against
+  the brief, and runs through the usual pipeline: spec review, build, code
+  review, QA, Security.
+- **When the client's intent isn't clear, it stops and asks you.** It never
+  guesses and never asks the client: the question, its recommendation and a
+  draft ready to paste go in a comment, and the issue is assigned to you with
+  status `blocked`, so it lands in your Paperclip inbox. You ask the client
+  and hand the issue back; their reply on GitHub reaches the team through the
+  bridge.
+- **Agents act as you.** The Coder and the Liaison use your account with plain
+  `gh`, as the Coder does everywhere; reviews stay on the Paperclip issue, and
+  the bot isn't used. The client's reviewers are the real gate, and their
+  branch protection is what keeps anything off their default branch.
+- **Agents mark their GitHub posts invisibly.** Instead of a bold role header,
+  a comment or PR description starts with `<!-- agent: Coder -->` (GitHub
+  doesn't render it), so the bridge can tell agents from you. The `agent` label
+  and the commit trailer are used only if the client brief allows them.
+- **The Liaison doesn't triage other people's issues, open issues on its own,
+  or touch the client's roadmap.** It proposes those to you instead.
+
+The bridge watches less on a Liaison project:
+
+| GitHub event | Becomes |
+|---|---|
+| an issue assigned to you, or opened by you, not yet tracked | an issue for the **Liaison** |
+| a PR you opened by hand | a review issue for the **Lead Engineer** (the Coder's PRs carry the marker and are skipped) |
+| a tracked issue reassigned away from you, or a tracked issue or PR closed or merged | a comment on the Paperclip issue tracking it |
+| a human's comment on a tracked issue or PR | a comment on the Paperclip issue tracking it |
+| a failed CI run on your PR | a comment on the Paperclip issue tracking the PR |
+
+Everything else there (other people's issues and comments, CI on the default
+branch, Dependabot) belongs to the client and isn't routed. "You" is the
+account `gh` is logged in as in the Paperclip container. The bridge tells a
+Liaison project by its lead, so there's nothing to configure beyond
+`--type`. A project's type is fixed when it's created: `newproject.sh` refuses
+to add a Liaison to a project that has a Product Manager, or the reverse.
+
 ### Skills
 
 Skills are delivered through **Paperclip's company skill library**, which
@@ -599,21 +652,24 @@ run can simply be repeated:
 | 2. host key | records the box's host key for the Paperclip user (strict checking needs it) |
 | 3. checkouts | the repos again, in the Paperclip container (see above for why) |
 | 4. environment | SSH environment `<name>` → `px-<name>`, then probes it |
-| 5. team | `<Name> Product Manager`, `Lead Engineer`, `UI Designer`, `Coder`, `QA Lead`, `Security`, all on that environment. The Product Manager reports to the CEO if there is one; Coder to Lead Engineer; the rest to the Product Manager |
-| 6. project | project `<name>`, Product Manager as lead, one workspace per repo (the first is primary) |
-| 7. kickoff | an issue for the Product Manager: read the repos, write `docs/ROADMAP.md` + `docs/STATE.md`, open a PR. It is assigned as `todo`, so **the Product Manager starts working immediately** |
+| 5. team | `<Name> Product Manager` (or `Product Manager Liaison`), `Lead Engineer`, `UI Designer`, `Coder`, `QA Lead`, `Security`, all on that environment. The lead reports to the CEO if there is one; Coder to Lead Engineer; the rest to the lead |
+| 6. project | project `<name>`, the Product Manager or Liaison as lead, one workspace per repo (the first is primary) |
+| 7. kickoff | an issue for the lead. A Product Manager reads the repos, writes `docs/ROADMAP.md` + `docs/STATE.md` and opens a PR; a Liaison writes the client brief and lists your current assignments, without touching GitHub. It is assigned as `todo`, so **the lead starts working immediately** |
 | 8. GitHub watch | sets how often the GitHub bridge polls the project's repos (`--watch-every`), or reports the current interval |
 
-Options: `--prodmgr-adapter claude|codex`, `--prodmgr-model`,
+Options: `--type product-manager|liaison` (default `product-manager`; see
+**Liaison projects**), `--prodmgr-adapter claude|codex` (the lead's runtime,
+either type), `--prodmgr-model`,
 `--team-adapter claude|codex` (the other five), `--watch-every <duration>`,
 `--reports-to <agent>`,
 `--budget <dollars>`, `--prodmgr-instructions <file>`, `--no-kickoff`,
 `--egress agent` and `--no-auth` (both passed to `newbox.sh`), `--company`,
 and `--dry-run`. `scripts/newproject.sh --check` runs only the preflight.
 
-The Product Manager's instructions come from `templates/product-manager.md`, rendered with the
+The Product Manager's instructions come from `templates/product-manager.md`
+(a Liaison's from `templates/product-manager-liaison.md`), rendered with the
 project name and repo list, and are stored by Paperclip as the agent's
-`AGENTS.md`. Edit the template to change every future Product Manager. Existing ones are
+`AGENTS.md`. Edit the template to change every future one. Existing ones are
 edited in the UI.
 
 `provision.sh` takes a manifest with one project per line. Each line is a
@@ -635,7 +691,8 @@ scripts/provision.sh local/projects.manifest --dry-run
 
 The generated file lists every repo the `gh` login can clone (owned,
 collaborator, and org member), grouped by owner and tagged
-private/public/archived/fork with the last push date. Every line starts
+private/public/archived/fork with the last push date. Repos you have no admin
+rights on are someone else's, so their lines carry `--type liaison`. Every line starts
 commented out, except projects whose box already exists, so running it as-is
 creates nothing new. Names are the repo name, made safe for `newproject.sh`;
 when two owners share a repo name, the owner is prefixed. `list-repos.sh`
@@ -1042,6 +1099,16 @@ One non-issue worth recording, since it looks alarming: under `--egress
 agent`, `sudo apt-get update` fails with a password prompt. That's not the
 firewall. pixels deliberately replaces blanket `NOPASSWD` sudo with a
 restricted list; use `sudo safe-apt` instead.
+
+**A client issue assigned to you never reaches the Liaison.** The bridge
+starts watching a repo from the moment it first sees it, and only routes
+items updated after that, so an issue assigned to you before the project
+existed stays quiet until someone touches it. The Liaison's kickoff lists your
+current assignments for that reason. To route them anyway: `node
+~/.local/share/my-ai-org/github-bridge.mjs --since <time>` in the Paperclip
+container (`--dry-run` first). If nothing is routed even then, check that the
+container's `gh` login is the account the client assigns work to (`gh api
+user -q .login`); that login is who "you" are to the bridge.
 
 ## Working with Incus directly
 
