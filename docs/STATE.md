@@ -60,6 +60,12 @@ Settled by observation rather than by asking:
   ([#5](https://github.com/dpeckham/my-ai-org/issues/5)) — queued behind the
   first, tracked on Paperclip as DAV-18. Both edit
   `scripts/newproject.sh`, so they go one at a time.
+- **A licence for this repository**
+  ([#8](https://github.com/dpeckham/my-ai-org/issues/8)) — the operator chose
+  MIT, copyright holder Dave Peckham; see
+  [0003](decisions/0003-mit-licence-for-this-repo.md). With the Lead Engineer
+  for spec review, tracked on Paperclip as DAV-15. Until it merges the repo is
+  public with no licence, so nobody who finds it may legally use it.
 
 ### Workarounds in place
 
