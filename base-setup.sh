@@ -94,6 +94,15 @@ opencode    = "latest"
 version  = "$T3_VERSION"
 url      = "https://github.com/pingdotgg/t3code/releases/download/v$T3_VERSION/t3-$T3_VERSION-linux-$T3_ARCH.tar.gz"
 bin_path = "t3-$T3_VERSION-linux-$T3_ARCH"
+
+[settings]
+# Paperclip stages every agent run in a fresh directory under here (the SSH
+# environment's remote workspace path) with the repo's mise.toml copied in.
+# mise refuses untrusted config, and Paperclip's callback bridge starts node
+# through the shims, so without this every issue-bound run dies before the
+# agent starts ("Config files in ... are not trusted"). It trusts only what
+# Paperclip stages, i.e. the same repos newbox.sh already trusts in ~/code.
+trusted_config_paths = ["$PIXEL_HOME/paperclip"]
 EOF
 chown "$PIXEL_USER:$PIXEL_USER" "$PIXEL_HOME/.config/mise/config.toml"
 

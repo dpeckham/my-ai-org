@@ -67,6 +67,7 @@ apt-get update
 apt-get -y full-upgrade
 apt-get -y install \
   sudo curl gnupg ca-certificates git vim htop tmux jq rsync \
+  netcat-openbsd dnsutils \
   "linux-headers-$ARCH" dkms
 
 usermod -aG sudo "$USERNAME"

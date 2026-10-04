@@ -3,10 +3,14 @@
 #
 #   ./newbox.sh <name> [--repo org/repo]... [--egress agent] [--no-herdr] [--no-auth]
 #
-# Clones px-base's `ready` checkpoint (a ZFS snapshot, so this is ~1s), clears
-# the stale SSH host key for a recycled name, waits for sshd, seeds the agent
-# credentials, and registers the box with herdr so it shows up in the sidebar
-# on this laptop.
+# Clones px-base's `ready` checkpoint (a copy-on-write snapshot, so this is
+# ~1s), authorizes the caller's SSH key, clears the stale host key for a
+# recycled name, waits for sshd, seeds the agent credentials, and registers the
+# box with herdr if herdr is installed here.
+#
+# The same script runs from your machine and from inside the Paperclip
+# container (where the DevOps agent drives it); pixels' config decides which
+# Incus daemon and project it talks to.
 #
 # --no-auth skips the credential seeding. Use it for a box you do not trust
 # with your live Claude/ChatGPT subscription tokens -- anything running an
@@ -43,9 +47,32 @@ step() { echo; echo "==> $*"; }
 step "Cloning $BASE:ready -> $NAME"
 pixels create "$NAME" --from "$BASE:ready"
 
+# A clone carries the template's authorized_keys, i.e. whoever built the
+# template. Add this caller's key, plus any listed in
+# ~/.config/pixels/authorized_keys (paperclip-up.sh puts the other side's key
+# there), so a box made by you is reachable by Paperclip and vice versa. This
+# goes over the Incus API, since SSH cannot work until it is done.
+step "Authorizing SSH keys"
+# Keys go in as arguments, not stdin: `pixels exec` allocates a PTY whenever
+# stdin is attached, which echoes the input back and never delivers EOF.
+KEYS=("$(cat "$HOME/.ssh/id_ed25519.pub")")
+if [[ -f "$HOME/.config/pixels/authorized_keys" ]]; then
+  while IFS= read -r k; do
+    [[ -z "$k" || "$k" == \#* ]] || KEYS+=("$k")
+  done < "$HOME/.config/pixels/authorized_keys"
+fi
+pixels exec "$NAME" -- sh -c '
+  umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys
+  for k in "$@"; do
+    grep -qxF "$k" ~/.ssh/authorized_keys || printf "%s\n" "$k" >> ~/.ssh/authorized_keys
+  done
+  echo "    $(wc -l < ~/.ssh/authorized_keys) key(s) authorized"' sh "${KEYS[@]}" </dev/null
+
 # Each clone regenerates its host key, and names get reused, so an old entry
-# here would hard-fail the next connection.
+# here would hard-fail the next connection. ssh records the HostName, which is
+# px-foo.incus when resolved directly and px-foo behind a ProxyCommand.
 ssh-keygen -R "$HOSTALIAS" -f "$KNOWN" >/dev/null 2>&1 || true
+ssh-keygen -R "$HOSTALIAS.incus" -f "$KNOWN" >/dev/null 2>&1 || true
 
 step "Waiting for sshd"
 for i in $(seq 1 30); do
@@ -94,21 +121,29 @@ for repo in ${REPOS+"${REPOS[@]}"}; do
   "
 done
 
+# Best-effort: herdr is the human's sidebar, so a failure here must not fail
+# the box. `herdr machine` arrived in 0.9; older herdr (distro packages lag)
+# has only `herdr --remote <target>`, which needs no registration at all.
 if [[ $REGISTER_HERDR -eq 1 ]] && command -v herdr >/dev/null; then
   step "Registering with herdr"
-  # A herdr server already running on the box makes `machine add` refuse, and a
-  # stale saved entry under the same label would shadow the new one.
-  ssh "$HOSTALIAS" 'herdr server stop >/dev/null 2>&1 || true' 2>/dev/null || true
-  OLD=$(herdr machine list 2>/dev/null | awk -v h="$HOSTALIAS" '$3==h {print $1}')
-  [[ -n "$OLD" ]] && herdr machine remove "$OLD" >/dev/null 2>&1 || true
-  herdr machine add "$HOSTALIAS" --label "$LABEL"
+  if herdr machine list >/dev/null 2>&1; then
+    # A herdr server already running on the box makes `machine add` refuse, and a
+    # stale saved entry under the same label would shadow the new one.
+    ssh "$HOSTALIAS" 'herdr server stop >/dev/null 2>&1 || true' 2>/dev/null || true
+    OLD=$(herdr machine list 2>/dev/null | awk -v h="$HOSTALIAS" '$3==h {print $1}' || true)
+    [[ -n "$OLD" ]] && { herdr machine remove "$OLD" >/dev/null 2>&1 || true; }
+    herdr machine add "$HOSTALIAS" --label "$LABEL" || echo "    (herdr registration failed; the box is fine)"
+  else
+    echo "    this herdr ($(herdr --version 2>/dev/null)) has no 'machine' command; use: herdr --remote $HOSTALIAS"
+  fi
 fi
 
 step "Ready"
 echo "  ssh $HOSTALIAS"
 echo "  pixels console $NAME"
 echo "  t3:    ./t3-connect.sh $HOSTALIAS"
-[[ $SEED_AUTH -eq 1 ]] && echo "  agents: claude / codex / gh authenticated from this laptop's credentials"
+echo "  paperclip SSH environment: host $HOSTALIAS, user pixel, path /home/pixel/paperclip"
+[[ $SEED_AUTH -eq 1 ]] && echo "  agents: claude / codex / gh authenticated from this machine's credentials"
 for repo in ${REPOS+"${REPOS[@]}"}; do
   echo "  repo:   ~/code/${repo%%/*}/${repo##*/}"
 done

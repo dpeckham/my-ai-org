@@ -1,80 +1,372 @@
-# geekom — Incus dev box
+# my-ai-org — project containers + Paperclip on Incus
 
-Headless Debian 13 (trixie) on a 32GB / 2TB NVMe machine. Incus manages LXC
-containers (and VMs if needed) on a ZFS pool, and everything is driven from
-the laptop — nothing is typed on the box itself after provisioning.
+Everything needed to rebuild an AI-agent workshop on a fresh machine:
 
-Day to day that means one command per project:
+- **One Incus container per project.** Each is a clone of a prebuilt image
+  with git, mise, `claude` / `codex` / `opencode`, and the project's repo
+  checked out. Clones are copy-on-write snapshots, so a new box takes seconds.
+- **[Paperclip](https://github.com/paperclipai/paperclip) as the control
+  plane**, in its own container. It schedules and supervises agents that run
+  *inside* the project containers over SSH, and its DevOps agent provisions
+  those containers itself.
+- **The host stays clean.** Nothing agent-related is installed on the machine
+  you work at beyond the Incus client and pixels.
 
-```
-./newbox.sh eswitch --repo dpeckham/eswitch
-```
-
-which clones a prebuilt image, wires up SSH, signs in `claude` / `codex` /
-`gh`, checks out the repo and installs its toolchain, and registers the box
-with herdr — in a few seconds, because the clone is a ZFS snapshot. See
-**Dev base image**.
-
-## Layout
-
-| Partition | Size    | Use            |
-|-----------|---------|----------------|
-| p1        | 1 GB    | EFI (/boot/efi)|
-| p2        | 60 GB   | ext4 root      |
-| p3        | 8 GB    | swap           |
-| p4        | ~1.9 TB | ZFS pool `default` (owned by Incus) |
-
-Host is reachable as `geekom.local` (mDNS). Tailscale is installed but not
-enabled; run `sudo tailscale up --ssh` on the box if remote access is wanted.
-
-## Provisioning (one time, or after a reinstall)
-
-Prereqs on the laptop: `ssh`, `ssh-copy-id`, `scp`, and the `incus` client.
-
-1. Install Debian 13 netinst: no desktop, SSH server ticked, manual
-   partitioning as above with p4 set to "do not use". **Disable Secure Boot
-   in the BIOS** — the ZFS DKMS module won't load with it on.
-2. Note the box's LAN IP from the console (`ip a`).
-3. From the laptop, with `bootstrap.sh` and `firstboot.sh` in the same dir:
-
-   ```
-   NO_TAILSCALE=1 ./bootstrap.sh <ip> <username> /dev/nvme0n1p4
-   ```
-
-   Args: LAN IP or hostname, your login user, the raw partition, and
-   optionally a remote name (default `box`). Drop `NO_TAILSCALE=1` to join
-   the tailnet during setup.
-
-   You'll be prompted for a password a few times (ssh-copy-id, sudo/root for
-   firstboot, sudo for reboot). No passwordless sudo is configured.
-
-`bootstrap.sh` copies your SSH key, uploads and runs `firstboot.sh` as root,
-registers the box as an Incus remote on the laptop, and reboots it.
-
-`firstboot.sh` (runs on the box as root) enables contrib, installs ZFS,
-Avahi/mDNS, Tailscale, and Incus; caps the ZFS ARC at 4GB; switches sshd to
-key-only auth; initialises Incus with the ZFS pool, `incusbr0` bridge, the
-shared volumes, and the `dev` profile. It's idempotent — safe to rerun.
-
-### If bootstrap didn't finish the remote step
-
-On the box: `incus config trust add laptop` → prints a token.
-On the laptop:
+The repo holds no secrets and nothing project-specific. Credentials are copied
+from the machine running the scripts at the time they run. Which projects
+exist is decided when you run `newbox.sh`, not here.
 
 ```
-incus remote add box geekom.local --token <token> --accept-certificate
-incus remote switch box
+ host (your machine)                                  Incus
+ ─────────────────────                 ┌────────────────────────────────────────┐
+  browser ──localhost:3100────────────►│ default project                        │
+                                       │  paperclip  (Paperclip, pixels, incus) │
+  ssh px-foo / pixels ──┐              │     │ restricted cert   │ ssh px-*     │
+                        │              ├─────┼───────────────────┼──────────────┤
+                        │              │ agents project (restricted, capped)    │
+                        └─────────────►│  px-base (template, `ready` snapshot)  │
+                                       │  px-foo  px-bar  ...  (project boxes)  │
+                                       └────────────────────────────────────────┘
 ```
 
-If it says the remote exists, `incus remote remove box` first. Tokens are
-single-use; make a new one if the old one is rejected.
+## Contents
+
+| File | Runs on | Does |
+|------|---------|------|
+| `install.sh` | Incus host | **the one command**: prerequisites, sign-ins, and every script below, in order |
+| `host-setup.sh` | Incus host | creates the restricted `agents` project, binds the Incus API to the bridge, sets up `.incus` DNS, installs pixels + the `px-*` SSH block |
+| `base-setup.sh` | template container (root) | installs git, gh, mise, herdr, t3, and the agent CLIs into the base image |
+| `paperclip-up.sh` | Incus host | builds or updates the Paperclip container end to end |
+| `paperclip-org.sh` | Incus host | the root company, Chief of Staff and DevOps agents |
+| `paperclip-setup.sh` | Paperclip container (root) | node, Paperclip and its service, pixels, incus client, SSH key |
+| `newproject.sh` | host or Paperclip | a whole project: box, SSH environment, PM agent, Paperclip project, kickoff issue |
+| `provision.sh` | host or Paperclip | runs `newproject.sh` for every line of a manifest, with a preflight and summary |
+| `list-repos.sh` | host | writes `local/projects.manifest`: every repo the `gh` login can see, as a commented-out manifest to pick from |
+| `newbox.sh` | host or Paperclip | clones the base into a project box, authorizes keys, seeds creds, checks out repos |
+| `set-claude-token.sh` | host | installs the long-lived Claude token (`claude setup-token`) on the host, in Paperclip, and on every box |
+| `seed-agent-auth.sh` | host | copies this machine's claude / codex / gh credentials into a box or the Paperclip container |
+| `t3-connect.sh` | host | connects the T3 Code client to a box from the CLI |
+| `templates/chief-of-staff.md`, `templates/devops-agent.md` | — | the standing agents' instructions (`AGENTS.md`) |
+| `templates/pm-agent.md` | — | the PM agent's instructions (`AGENTS.md`), rendered per project |
+| `examples/projects.manifest` | — | manifest format for `provision.sh`, with placeholder names |
+| `pixels-config.toml` | — | pixels settings shared by every caller (the setup scripts add the connection part) |
+| `bootstrap.sh` / `firstboot.sh` / `laptop-setup.sh` | — | the optional **remote box** layout (see the end) |
+| `CLAUDE.md` | — | rules for agents working in this repo, including Paperclip's DevOps agent |
+
+## Quick start
+
+On a Linux machine (Debian/Ubuntu, Arch or Fedora), in a real terminal:
+
+```
+git clone https://github.com/<org>/<this-repo>.git && cd <this-repo>
+./install.sh
+```
+
+That's the whole install. It asks for sudo, a GitHub sign-in and a Claude
+sign-in the first time, then builds everything:
+
+| Phase | What happens |
+|-------|--------------|
+| 0. prereqs | installs Incus, mise, gh, jq, git; sets up subordinate IDs, starts and initialises Incus; joins `incus-admin` (and carries on under it, no logout needed); creates `~/.ssh/id_ed25519` if missing |
+| 1. sign-ins | `gh auth login`, and a long-lived Claude token via `claude setup-token` → `set-claude-token.sh` (see **Agent credentials**); each only if missing |
+| 2. host | `host-setup.sh` |
+| 3. base image | builds the template project boxes are cloned from (skipped if `base:ready` exists) |
+| 4. paperclip | `paperclip-up.sh` |
+| 5. org | `paperclip-org.sh`: your root company, a Chief of Staff and a DevOps agent |
+| 6. projects | `provision.sh local/projects.manifest`. On the first run there is no manifest, so it writes one listing every repo you can access, all commented out, and stops. Uncomment what you want and run `./install.sh` again |
+
+Options: `--company "Name"` (otherwise it asks, defaulting to "<your git
+name>'s company"), `--projects FILE`, `--no-projects`.
+
+It's idempotent. Re-running skips every finished step, so after a failure,
+fix the cause and run it again. On an existing install, a re-run brings it up
+to date.
+
+The individual scripts below are what `install.sh` runs. Use them on their
+own to redo one piece.
+
+## The `agents` project: the trust boundary
+
+Paperclip's DevOps agent has to be able to create and destroy containers.
+Full access to the Incus API is equivalent to root on the host, so it doesn't
+get that. Instead, every project box lives in a separate Incus project, and
+Paperclip holds a client certificate **restricted to that project**.
+
+`host-setup.sh` creates it with `restricted=true`, which blocks privileged
+containers, nesting, disks that are not on a managed pool, `raw.*` keys,
+backups and so on. On top of that it adds:
+
+| Key | Value | Why |
+|-----|-------|-----|
+| `restricted.snapshots` | `allow` | pixels checkpoints are snapshots; restricted blocks them by default |
+| `restricted.networks.access` | `incusbr0` | boxes may only join the shared bridge |
+| `limits.memory` | `20GiB` | caps the whole fleet; see below |
+| `limits.cpu` | `32` | sum of per-box `limits.cpu` |
+| `limits.instances` | `10` | |
+
+All of these are env knobs on `host-setup.sh` (`AGENTS_MEMORY=...`).
+
+**Project limits count every instance's cap, running or stopped**, the
+template included. At the default 4GiB per box, 20GiB means the template plus
+four boxes. When the cap is hit, creation fails with a limits error. Destroy
+a box or raise the cap.
+
+The project has `features.networks=false`, so boxes share the default
+project's bridge and DNS. They resolve as plain `<name>.incus` from anywhere
+on the bridge, whatever project they are in.
+
+What the restricted certificate was verified to refuse: exec into anything
+in `default` (including the Paperclip container itself), privileged
+containers, host-path disks, and any server config change.
+
+The Incus API listens on the **bridge address only** (`core.https_address =
+<bridge-ip>:8443`). Containers can reach it, but still need a trusted
+certificate. The LAN cannot reach it at all. If your host already serves the
+API on another address, `host-setup.sh` leaves it alone and says so.
+
+## Paperclip
+
+### What runs where
+
+| | Where | Notes |
+|-|-------|-------|
+| Paperclip server + embedded Postgres | `paperclip` container, `default` project | systemd **user** service, `127.0.0.1:3100` inside the container |
+| UI | `http://localhost:3100` on the host | Incus proxy device `ui` (`bind=host`); nothing else can reach it |
+| State | `/home/paperclip/.paperclip` in the container | config, DB, logs, secrets key, backups |
+| Agents doing project work | the project boxes | over Paperclip's SSH environment driver |
+| The DevOps agent | the `paperclip` container | runs `newbox.sh` / `pixels` from its checkout of this repo |
+
+Paperclip runs in `local_trusted` mode, with no login. That's safe only
+because the only way in is the host's loopback. Do not switch the proxy to
+`0.0.0.0`. For access from another device, reconfigure Paperclip for
+`authenticated` mode (`paperclipai configure --section server`) and put it
+on a tailnet instead.
+
+`paperclip-up.sh` is idempotent. Re-run it after changing any of the
+scripts. It also seeds this machine's agent credentials into the container
+(`--no-auth` skips that) and clones this repo there over HTTPS. A private
+fork needs the seeded `gh` token.
+
+Telemetry: Paperclip reports usage by default. `paperclip-setup.sh` turns it
+off (`PAPERCLIP_TELEMETRY_DISABLED=1` in the user manager's environment). Run
+`PAPERCLIP_TELEMETRY=on ./paperclip-up.sh` to leave it on.
+
+```
+incus exec paperclip -- su - paperclip                     # a shell as the service user
+# then, inside:
+export XDG_RUNTIME_DIR=/run/user/$(id -u)                  # needed for systemctl --user under su
+paperclipai service status | logs -f | restart
+paperclipai doctor
+paperclipai update                                         # new release; swaps the managed install
+```
+
+### Pointing Paperclip at a project box
+
+Paperclip reaches boxes with its **SSH environment** driver, which is still
+**experimental**. `paperclip-setup.sh` turns it on at install through the API
+(`PATCH /api/instance/settings/experimental {"enableEnvironments": true}`);
+in the UI it's under Settings → Instance settings → Experimental.
+`newproject.sh` creates the environment for each project. By hand, the fields
+are:
+
+| Field | Value |
+|-------|-------|
+| Driver | SSH |
+| Host | `px-foo` |
+| Port | `22` |
+| Username | `pixel` |
+| Remote workspace path | `/home/pixel/paperclip` |
+| Private key | leave empty |
+| Known hosts | leave empty |
+| Strict host key checking | on |
+
+Agents assigned to it need **engine `cli`** in their adapter settings (see
+**Gotchas**).
+
+Paperclip shells out to the system `ssh` without `-F`, so the `paperclip`
+user's `~/.ssh/config` applies. The `px-*` block there maps `px-foo` to
+`px-foo.incus` and keeps host keys in `~/.ssh/known_hosts.pixels`. With the
+key and known-hosts fields empty, it uses the user's own `~/.ssh/id_ed25519`
+and that file. `newbox.sh` authorizes the key and records the host key when
+it waits for sshd, which is why strict checking passes without pasting
+anything. That exact command line (`BatchMode=yes`,
+`StrictHostKeyChecking=yes`, no `-i`) was tested against a fresh box.
+
+How a run on a box works:
+
+- Agents talk back to Paperclip through a bridge tunnelled over that same SSH
+  session. Boxes need no route to Paperclip, so `--egress agent` boxes are
+  fine.
+- `claude_local` runs authenticate with the long-lived subscription token
+  bound on the environment (`CLAUDE_CODE_OAUTH_TOKEN`; see **Agent
+  credentials**). They stay on your subscription, with no API key.
+- `codex_local` is different. It uploads the Paperclip container's
+  `~/.codex/auth.json` to the box, shadowing the box's own login. So the
+  Paperclip container needs a codex login too (`paperclip-up.sh` seeds one if
+  the host has it).
+
+Known rough edges in the SSH driver, as of Paperclip 2026.1001:
+
+- Cancelling a run or hitting a timeout stops only the local `ssh` client, not
+  the agent on the box
+  ([#14704](https://github.com/paperclipai/paperclip/issues/14704)).
+- Paperclip-managed MCP tools show up on SSH targets, but calls are blocked by
+  the fixed `--allowedTools` list
+  ([#14940](https://github.com/paperclipai/paperclip/issues/14940)).
+- Per-run workspace copies under `.paperclip-runtime/runs/` are never cleaned
+  up on the box
+  ([#14527](https://github.com/paperclipai/paperclip/issues/14527)). Prune
+  them now and then.
+
+**Agents on a box do not work in the box's own checkout.** Each run, the
+SSH driver:
+
+1. uploads the project workspace from the Paperclip side to
+   `<remote workspace path>/.paperclip-runtime/runs/<run id>/workspace` on the
+   box (a git import plus the tracked files);
+2. runs the agent there;
+3. copies the changes back.
+
+So the checkout Paperclip treats as the project's workspace lives in the
+**Paperclip container**, at `~/code/<org>/<repo>`. The box's checkout at the
+same path is the human's copy, for `ssh`, herdr and T3. The two meet through
+the git remote, which is the durable memory either way. `newproject.sh` sets
+up both. The `claude` or `codex` binary must already be on the box's PATH,
+since the SSH driver installs nothing; the base image has both.
+
+### Company model
+
+One Paperclip **company** stands for the operator, and every project lives
+inside it as a Paperclip **project**: its own box, its own SSH environment,
+and a PM agent as lead. Paperclip companies are strict silos. Cross-company
+API calls return 403, and there's no parent/holding relationship. Inside one
+company, though, projects can hand work to each other through ordinary issue
+assignment and share roles like a CEO or DevOps agent. If a project later
+needs walled-off budgets and agents, it can be split into its own company,
+which the operator then runs alongside the first.
+
+### Starting a project
+
+```
+./newproject.sh <name> <org/repo> [<org/repo>...] [options]
+./provision.sh  <manifest> [--dry-run]       # many at once
+```
+
+`newproject.sh` takes a project from repo to working PM in seven steps. Each
+step finds its object by name and skips it if it already exists, so a failed
+run can simply be repeated:
+
+| Step | Creates |
+|------|---------|
+| 1. box | `px-<name>` via `newbox.sh`, with every repo at `~/code/<org>/<repo>` |
+| 2. host key | records the box's host key for the Paperclip user (strict checking needs it) |
+| 3. checkouts | the repos again, in the Paperclip container (see above for why) |
+| 4. environment | SSH environment `<name>` → `px-<name>`, then probes it |
+| 5. PM agent | `<Name> PM`: role `pm`, `claude_local` or `codex_local`, on that environment, reporting to the CEO if there is one |
+| 6. project | project `<name>`, PM as lead, one workspace per repo (the first is primary) |
+| 7. kickoff | an issue for the PM: read the repos, write `docs/ROADMAP.md` + `docs/STATE.md`, open a PR. It is assigned as `todo`, so **the PM starts working immediately** |
+
+Options: `--pm-adapter claude|codex`, `--pm-model`, `--reports-to <agent>`,
+`--budget <dollars>`, `--pm-instructions <file>`, `--no-kickoff`,
+`--egress agent` and `--no-auth` (both passed to `newbox.sh`), `--company`,
+and `--dry-run`. `./newproject.sh --check` runs only the preflight.
+
+The PM's instructions come from `templates/pm-agent.md`, rendered with the
+project name and repo list, and are stored by Paperclip as the agent's
+`AGENTS.md`. Edit the template to change every future PM. Existing PMs are
+edited in the UI.
+
+`provision.sh` takes a manifest with one project per line. Each line is a
+`newproject.sh` command line without the script name, and `defaults` lines are
+prepended to every project (see `examples/projects.manifest`). It runs a
+preflight first (Paperclip, company, the experimental flag, and memory
+headroom in the `agents` project for the boxes it will add), keeps going when
+one project fails, and prints a summary. It never deletes anything. **Keep real
+manifests out of this repo**, since they name real orgs and repos. `local/` is
+gitignored for exactly this.
+
+To start from everything you have access to:
+
+```
+./list-repos.sh                                  # -> local/projects.manifest
+$EDITOR local/projects.manifest                  # uncomment what you want
+./provision.sh local/projects.manifest --dry-run
+```
+
+The generated file lists every repo the `gh` login can clone (owned,
+collaborator, and org member), grouped by owner and tagged
+private/public/archived/fork with the last push date. Every line starts
+commented out, except projects whose box already exists, so running it as-is
+creates nothing new. Names are the repo name, made safe for `newproject.sh`;
+when two owners share a repo name, the owner is prefixed. `list-repos.sh`
+never overwrites an existing manifest. A re-run writes `….new` for you to diff
+and merge.
+
+Before the first run:
+
+- SSH environments sit behind an experimental flag. `paperclip-setup.sh` turns
+  it on at install. `newproject.sh` checks for it and stops if it has been
+  turned off since.
+- The PM's adapter needs credentials. `claude_local` uses the box's own login,
+  which `newbox.sh` seeds. `codex_local` uploads the **Paperclip container's**
+  codex login, so the container needs one. For private repos, the Paperclip
+  container needs a `gh` token to clone them. `seed-agent-auth.sh --incus
+  paperclip:paperclip` covers all of these.
+- With no CEO in the company, PMs report to nobody until you set
+  `--reports-to` or fix it in the UI.
+
+### Standing agents
+
+`paperclip-org.sh` gives every install the same shape:
+
+| Agent | Role | Runs | Job |
+|-------|------|------|-----|
+| Chief of Staff | `ceo` | Paperclip container | triage, cross-project priorities, oversight, reporting to the operator |
+| DevOps | `devops`, reports to Chief of Staff | Paperclip container, from its checkout of this repo | starts projects (`newproject.sh`), maintains boxes, keeps this repo current |
+| `<Name> PM`, one per project | `pm`, reports to Chief of Staff | the project's box | roadmap, state and flow for that project |
+
+All of them run claude with `engine: cli`, on the long-lived token. Their
+instructions come from `templates/` and are written only when the agent is
+created; edit them in the UI afterwards. Existing agents are matched by name
+and brought into line (runtime, role, manager) without touching their
+instructions or history.
+
+There's one exception. An agent created by Paperclip's own onboarding wizard
+is bound to an "AI connection", and Paperclip won't move a bound agent to
+another provider's runtime. There's no way to unbind it, and binding a Claude
+connection runs into Paperclip's broken subscription check (see **Gotchas**).
+So if you onboarded through the UI with codex, `paperclip-org.sh` fixes that
+agent's role and title but leaves it on codex. Installs made with
+`install.sh` never go through the wizard, so they don't have this problem.
+
+You don't need to finish the onboarding wizard. Paperclip only sends you there
+while no company exists, and `paperclip-org.sh` creates one through the API.
+
+### The DevOps agent
+
+Give it a `claude_local` (or `codex_local`) adapter with **no environment**,
+so it runs inside the Paperclip container as the `paperclip` user. Point its
+working directory at this repo's checkout there (`~/code/<org>/<repo>`). It
+then has:
+
+- `pixels`, preconfigured for the `agents` project through the restricted
+  certificate;
+- `newbox.sh`, which works there as written; it authorizes both your key and
+  Paperclip's on every new box;
+- `seed-agent-auth.sh`, which copies the container's own claude / codex / gh
+  credentials into the boxes it creates.
+
+`CLAUDE.md` in this repo is written for it, with the provisioning steps and
+the rules about what goes into the repo. Its normal tool is `newproject.sh`,
+which does the box, the SSH environment and the PM in one go. `newbox.sh` on
+its own is for boxes that aren't projects.
 
 ## Dev base image
 
-Project containers are clones of one template: the `base` container's `ready`
-checkpoint. [pixels](https://github.com/deevus/pixels) drives the lifecycle —
-it talks to this box's Incus daemon over HTTPS from the laptop, snapshots with
-ZFS, and can put an nftables egress allowlist around each container.
+Project boxes are clones of one template: the `base` container's `ready`
+checkpoint. [pixels](https://github.com/deevus/pixels) drives the lifecycle
+through the Incus API. It snapshots, clones, and can put an nftables egress
+allowlist around each container.
 
 Tools inside the image are managed by mise, so versions live in one manifest
 (`/home/pixel/.config/mise/config.toml`, written by `base-setup.sh`) rather
@@ -82,18 +374,9 @@ than being scattered across install commands.
 
 The image carries both the control planes (herdr, T3 Code) and the agents they
 drive (`claude-code`, `codex`, `opencode`). The agents are declared explicitly
-because `provision.devtools` is off — pixels would otherwise have installed
+because `provision.devtools` is off. pixels would otherwise have installed
 that set, and without them T3 Code connects to a box with no providers and
 shows an empty shell.
-
-| File | Runs on | Does |
-|------|---------|------|
-| `laptop-setup.sh` | laptop | installs pixels via mise, writes the pixels config + the `px-*` SSH block |
-| `base-setup.sh`   | container (root) | installs git, gh, mise, herdr, t3, and the agent CLIs |
-| `newbox.sh`       | laptop | clones the base, fixes up SSH, seeds agent creds, registers with herdr |
-| `seed-agent-auth.sh` | laptop | copies this laptop's claude / codex / gh credentials into a box |
-| `t3-connect.sh`   | laptop | connects the T3 Code client to a box from the CLI |
-| `pixels-config.toml` / `pixels-ssh.conf` | laptop | the two config files the setup script installs |
 
 ### Why Debian, not Alpine or NixOS
 
@@ -107,135 +390,103 @@ runtime, and only one of them is portable:
 | mise runtimes | prebuilt glibc node/python | **no** | needs `nix-ld` |
 
 `t3` links `/lib64/ld-linux-x86-64.so.2` and bundles only
-`@yuuang/ffi-rs-linux-x64-gnu` — there is no musl build to fall back to, and
-its installer picks on `uname -s`/`uname -m` alone. Alpine would cost t3
-entirely to save ~80MB on a 1.9TB pool. NixOS fails for the same reason
-(no `/lib64/ld-linux-x86-64.so.2`), and since mise would still be managing the
+`@yuuang/ffi-rs-linux-x64-gnu`. There is no musl build to fall back to, and
+its installer picks on `uname -s`/`uname -m` alone. Alpine would lose t3
+entirely to save ~80MB. NixOS fails for the same reason (no
+`/lib64/ld-linux-x86-64.so.2`), and since mise would still be managing the
 toolchain, its declarative half would only cover git, openssh and nix-ld.
 
-Debian 13 matches the host and ships a newer git than Ubuntu 24.04 (2.47 vs
-2.43). Swap `defaults.image` in `pixels-config.toml` to change it.
-
-### Build it
-
-```
-./laptop-setup.sh                 # once per laptop
-pixels create base
-incus file push base-setup.sh px-base/root/base-setup.sh
-incus exec px-base -- bash /root/base-setup.sh
-```
-
-Then finalise and snapshot. Removing the host keys is what lets each clone
-generate its own identity on first boot. Quote the glob — unquoted, your local
-shell expands it against the laptop's `/etc/ssh` and the container's keys are
-never touched:
-
-```
-incus exec px-base -- bash -c 'rm -f /root/base-setup.sh /etc/ssh/ssh_host_*'
-pixels checkpoint create base --label ready
-```
-
-### Use it
-
-```
-./newbox.sh foo                   # clone -> ssh -> agent creds -> herdr
-./newbox.sh foo --repo dpeckham/eswitch          # ...with a repo checked out
-./newbox.sh foo --repo qhcorp/api --repo qhcorp/web   # ...several
-./newbox.sh foo --egress agent    # ...with the outbound allowlist on
-./newbox.sh foo --no-auth         # ...without seeding your agent credentials
-```
-
-### Repo layout
-
-`--repo org/name` is repeatable and checks out to `~/code/<org>/<name>` inside
-the container, mirroring the laptop. Keeping the org level matters once a box
-holds more than one repo: paths match muscle memory, anything in a repo that
-refers to a sibling by relative path still resolves, and two repos sharing a
-name in different orgs do not collide. Each clone with a `mise.toml` is
-trusted and its toolchain installed.
-
-A per-project `[env]` in a repo's `mise.toml` — `_.path = ["bin"]` and the
-like — is applied by mise's activate hook, which fires in interactive shells
-only. `ssh box 'kicad-cli …'` will not see it. Use `mise exec --` for
-non-interactive invocations:
-
-```
-ssh px-eswitch 'cd ~/code/dpeckham/eswitch && mise exec -- just erc'
-```
-
-Cloning is a ZFS snapshot, so it takes about a second. Then:
-
-```
-ssh px-foo                        # via ProxyJump through geekom
-pixels console foo                # no SSH at all; native Incus exec
-pixels list / pixels destroy foo
-```
-
-Connect T3 Code to it with:
-
-```
-./t3-connect.sh px-foo            # server + tunnel + pairing, all from the CLI
-```
-
-See **Connecting T3 Code to a box**.
-
-### Worked examples
-
-Two boxes in real use, and the non-obvious things each one turned up.
-
-**`px-emaax` — `Electromaax/E-MAAX-V`**, a multi-language monorepo (ESP32
-firmware via PlatformIO/ESP-IDF, a Vite web UI baked into the firmware image,
-Python tooling, Android, iOS).
-
-```
-./newbox.sh emaax --repo Electromaax/E-MAAX-V
-```
-
-- The web build (`just build-web`) and the firmware build (`just
-  build-firmware`, ~2 min including the one-off ESP-IDF toolchain download)
-  both work; `just test-html` passes 485 tests.
-- `pytest` is not declared in that repo's `mise.toml` — only in
-  `tests/e2e/requirements.txt` — so `just test-host` fails on a clean machine
-  until those are installed.
-- The repo documents a `setuptools<81` pin for PlatformIO's venv. It is
-  manual, and any `mise install` that rebuilds that venv silently re-breaks
-  the firmware build until it is reapplied.
-- iOS/Swift cannot build here, and the device-backed E2E suites need the real
-  board (`EMAAX_DEVICE_URL` can point at one proxied elsewhere on the LAN).
-
-**`px-eswitch` — `dpeckham/eswitch`**, a KiCad 10 hardware project.
-
-```
-./newbox.sh eswitch --repo dpeckham/eswitch
-```
-
-- KiCad ships as an AppImage. It runs fine in the container despite there
-  being no SUID `fusermount`: it prints `trying to unshare...` and falls back
-  to user namespaces.
-- The repo puts its `bin/` shim on PATH with mise's `[env] _.path`, which the
-  activate hook only applies in interactive shells — so `just` and
-  `kicad-cli` need `mise exec --` over SSH (see **Repo layout**).
+Debian 13 ships a newer git than Ubuntu 24.04 (2.47 vs 2.43). Change
+`defaults.image` in `pixels-config.toml` to switch.
 
 ### Updating the image
 
 `base-setup.sh` is idempotent, so updating means re-running it on the template
-and taking a fresh checkpoint. Existing project containers are unaffected —
-they are already-diverged clones.
+and taking a fresh checkpoint. Existing boxes are unaffected; they are
+already-diverged clones.
 
 ```
 pixels start base || true                          # errors if already running
-incus file push base-setup.sh px-base/root/base-setup.sh
-incus exec px-base -- bash /root/base-setup.sh
-incus exec px-base -- bash -c 'rm -f /root/base-setup.sh /etc/ssh/ssh_host_*'
+incus file push base-setup.sh px-base/root/base-setup.sh --project agents
+incus exec px-base --project agents -- bash /root/base-setup.sh
+incus exec px-base --project agents -- bash -c 'rm -f /root/base-setup.sh /etc/ssh/ssh_host_*'
 pixels checkpoint delete base ready
 pixels checkpoint create base --label ready
 ```
 
-`gh`, `herdr` and `node` are pinned to `latest` and move on their own. **t3 is
-pinned by exact version**, because it is installed from a release tarball URL
-rather than a registry — bump `T3_VERSION` at the top of `base-setup.sh` and
-re-run. Check <https://github.com/pingdotgg/t3code/releases> for the current
-one.
+`gh`, `herdr` and `node` track `latest`. **t3 is pinned by exact version**,
+because it is installed from a release tarball URL rather than a registry.
+Bump `T3_VERSION` at the top of `base-setup.sh` and re-run. Check
+<https://github.com/pingdotgg/t3code/releases> for the current one.
+
+## Project boxes
+
+```
+./newbox.sh foo                                  # clone -> keys -> ssh -> creds -> herdr
+./newbox.sh foo --repo org/repo                  # ...with a repo checked out
+./newbox.sh foo --repo org/api --repo org/web    # ...several
+./newbox.sh foo --egress agent                   # ...with the outbound allowlist on
+./newbox.sh foo --no-auth                        # ...without seeding agent credentials
+
+ssh px-foo                                       # pixel@px-foo.incus
+pixels console foo                               # no SSH at all; Incus exec API
+pixels list / pixels destroy foo
+```
+
+`newbox.sh` runs the same from the host and from the Paperclip container.
+pixels' config decides which daemon and project it talks to. A clone carries
+the template's `authorized_keys`, so the script adds its caller's key, plus
+any listed in `~/.config/pixels/authorized_keys`. `paperclip-up.sh` lists
+each side's key in the other's file, so a box made by either is reachable by
+both. Boxes that predate that need the key added by hand.
+
+### Repo layout
+
+`--repo org/name` is repeatable and checks out to `~/code/<org>/<name>` inside
+the box, mirroring the host. Keeping the org level matters once a box holds
+more than one repo: paths match muscle memory, anything in a repo that refers
+to a sibling by relative path still resolves, and two repos sharing a name in
+different orgs do not collide. Each clone with a `mise.toml` is trusted and
+its toolchain installed.
+
+A per-project `[env]` in a repo's `mise.toml` (`_.path = ["bin"]` and the
+like) is applied by mise's activate hook, which fires in interactive shells
+only. `ssh box 'some-tool …'` will not see it. Use `mise exec --` for
+non-interactive invocations, which is also how agents driven over SSH run:
+
+```
+ssh px-foo 'cd ~/code/org/repo && mise exec -- just test'
+```
+
+Two more things that bite on a clean box:
+
+- Dependencies a repo installs outside its `mise.toml`, such as a
+  `requirements.txt` that only CI reads, are missing until installed by hand.
+- Manual pins a repo documents (a setuptools cap inside a tool's venv, say)
+  get undone by any `mise install` that rebuilds that venv.
+
+Put the fix in the repo, not in the image.
+
+### How SSH reaches a box
+
+Boxes live on the NAT'd `incusbr0` bridge, and the bridge's dnsmasq answers
+for `<name>.incus`. The SSH config differs only in how a caller gets there:
+
+| Caller | `px-*` block | Why |
+|--------|--------------|-----|
+| the Incus host | `HostName %h.incus` | on the bridge; `host-setup.sh` points systemd-resolved's `~incus` domain at the bridge (the unit from the Incus docs) |
+| the Paperclip container | `HostName %h.incus` | dnsmasq is already its resolver |
+| a laptop, remote box layout | `ProxyCommand ssh box 'nc $(dig … @bridge) 22'` | not on the bridge; hop through the box |
+
+Host keys are kept in `~/.ssh/known_hosts.pixels`. Every clone regenerates its
+host key and names get recycled, so `newbox.sh` clears the stale entry on each
+create. Do not set `UserKnownHostsFile=/dev/null` to avoid that. `herdr
+machine add` fails with "lost connection to server" when host keys are not
+persisted, and Paperclip's strict host key checking needs them too.
+
+Agent forwarding is deliberately off. These containers run AI coding agents,
+and a forwarded agent would hand them your keys. Use the seeded `gh` token or
+a scoped deploy key inside the box.
 
 ### Connecting T3 Code to a box
 
@@ -245,113 +496,97 @@ one.
 
 That starts a t3 server on the box, tunnels it to `localhost:3799`, mints a
 pairing token and opens the client on the pairing URL. The server binds
-**loopback inside the container**, so it is reachable only through the tunnel
-— not from other containers on the bridge, and not from the LAN. (`t3 serve
+**loopback inside the container**, so it is reachable only through the
+tunnel, not from other containers on the bridge or from the LAN. (`t3 serve
 --host 0.0.0.0`, which the docs suggest, exposes it to both.)
 
-Two details it works around: `t3 pair` prints a URL pointing at the
-container's bridge IP, which this laptop cannot route to, so the script keeps
-the token and rebuilds the URL against the tunnel; and the tunnel's
-descriptors are detached, because `ssh -f -N` backgrounds itself but inherits
-stdout and hangs anything capturing the script's output.
+The script works around two things:
+
+- `t3 pair` prints a URL pointing at the container's bridge IP, which the
+  client may not be able to route to. The script keeps the token and rebuilds
+  the URL against the tunnel.
+- `ssh -f -N` backgrounds itself but inherits stdout, which hangs anything
+  capturing the script's output. The script detaches the tunnel's descriptors.
 
 Drop the tunnel with `pkill -f 'ssh -f -N -L 3799:127.0.0.1:3773'`.
 
-#### Or through the app's SSH environment
-
-This is the GUI equivalent and cannot be scripted — T3 keeps its environments
-in an encrypted `connection-catalog.json` and registers only a `t3code://app`
-deep link, with no pairing URL form. Unlike herdr, which `newbox.sh` registers
-for you via `herdr machine add`, there is no `t3 ... add` to call.
-
-In the T3 Code desktop app: Settings -> Connections -> Add environment -> SSH,
-and enter the alias (`px-foo`, or `pixel@px-foo`) — **not** the IP that
-`pixels list` prints.
-
-An IP does not match the `Host px-*` pattern, so ssh applies no ProxyCommand
-and tries the NAT'd bridge directly, which fails like this:
+The T3 Code desktop app can do the same through Settings → Connections → Add
+environment → SSH, but that can't be scripted: T3 keeps its environments in an
+encrypted `connection-catalog.json` and has no add command. Enter the alias
+(`px-foo`), **not** an IP. An IP does not match the `Host px-*` pattern, so
+the block above never applies. Behind a ProxyCommand that fails like this:
 
 ```
 Could not prepare the SSH environment: ... SshCommandError:
-ssh: connect to host 10.185.22.87 port 22: Operation timed out
+ssh: connect to host 10.x.y.z port 22: Operation timed out
 ```
 
-The fix is always to use the alias, which is what pulls in the hop.
-
-The app shells out to the system `ssh` — its bundle builds
-`ssh -o BatchMode=… -o ControlMaster=no` command lines and carries no JS ssh
-library — so it reads `~/.ssh/config` and the `px-*` block below applies,
-NAT and all. `BatchMode` forbids interactive prompts, so the hop has to work
-non-interactively; it does, with keys coming from the 1Password agent. On
-first connect the app installs its own runtime to `~/.t3/runtime` on the
-container, which is why `curl`, `tar` and `sha256sum` are in the base image.
-
-From a phone the pairing flow (`t3 serve` + `t3 pair`) needs the device to
-reach `10.185.22.x`, which the LAN cannot — that path wants Tailscale in the
-container (`t3 pair --tailscale`).
+The app shells out to the system `ssh` with `BatchMode`, so the hop has to
+work without prompts. On first connect it installs its runtime to
+`~/.t3/runtime` on the box, which is why `curl`, `tar` and `sha256sum` are in
+the base image. Pairing from a phone needs the phone to reach the box, which
+wants Tailscale in the container (`t3 pair --tailscale`).
 
 ### Agent credentials
 
-`claude`, `codex` and `gh` are all signed in from this laptop's credentials
-when a box is created, so there is nothing to log into per container. `gh`
-matters for `--repo`: the template ships the CLI but no token, so without
-seeding a fresh box cannot clone a private repo.
+`claude`, `codex` and `gh` are signed in on every box at creation, so there's
+nothing to log into per box. `gh` matters for `--repo`: the template ships the
+CLI but no token, so without seeding, a fresh box cannot clone a private repo.
 
-The `gh` token comes from `gh auth token` (the laptop keeps it in the keyring)
-and is handed over stdin, never as an argv value that would show up in the
-container's process list.
+**Claude uses one long-lived token, not copied logins.** A Claude Code login
+(`~/.claude/.credentials.json`) rotates its refresh token on every refresh.
+Copy it to three machines, and the first copy to refresh logs the other two
+out ("OAuth session expired and could not be refreshed"), usually within hours.
+Instead:
 
-Neither agent tool can take its subscription auth from an env var in the sessions
-that matter here. Claude Code keeps it in the macOS Keychain (a plain file on
-Linux) and reads `~/.claude/.credentials.json` on the container; codex has no
-headless token for ChatGPT sign-in at all — only `--with-api-key`, which is a
-different billing path — so its `~/.codex/auth.json` has to be copied. That is
-all `seed-agent-auth.sh` does, streaming both straight over SSH so nothing is
-written to a temp file and no value is ever printed. Both land mode 600.
+```
+claude setup-token          # once, in a real terminal: browser sign-in, prints a token
+./set-claude-token.sh       # paste it at the hidden prompt
+```
 
-Credentials are seeded per container rather than baked into the `ready`
-checkpoint, so the template stays credential-free and nothing long-lived sits
-in a ZFS snapshot that every clone inherits.
+`claude setup-token` mints a long-lived token billed to the same
+subscription. Claude reads it from `CLAUDE_CODE_OAUTH_TOKEN`, and it never
+rotates, so one token serves everything. `set-claude-token.sh` checks that
+claude accepts it, then puts it in four places:
+
+| Where | How it's used |
+|-------|---------------|
+| `~/.config/my-ai-org/claude-oauth-token` on the host (600) | the copy every other script reads; re-used by `paperclip-up.sh` on a rebuild |
+| the same path in the Paperclip container | that container's own `claude`, and boxes the DevOps agent creates |
+| Paperclip company secret `claude-oauth-token` | bound as `CLAUDE_CODE_OAUTH_TOKEN` on every SSH and local environment, so every agent run gets it; `newproject.sh` binds it on new environments |
+| every running box | the same file, plus a hook at the top of `~/.bashrc` (and in `~/.profile`) that exports it, including for non-interactive `ssh box cmd` |
+
+Re-run it with a new token to rotate. The secret binding follows the latest
+version, so nothing needs re-binding.
+
+**codex** still copies `~/.codex/auth.json`: it has no long-lived token for
+ChatGPT sign-in, only `--with-api-key`, which is a different billing path.
+ChatGPT logins rotate refresh tokens too, so copies can log each other out the
+same way. Where that bites, give each place its own `codex login
+--device-auth`. Paperclip already requires its own separate codex sign-in for
+this reason.
+
+`seed-agent-auth.sh` installs all three, streaming over SSH (or `incus exec`,
+for the Paperclip container). Nothing goes to a temp file and no value is
+printed. `--only claude|codex|gh` limits it to one. The `gh` token comes from
+`gh auth token` and goes over stdin, never as an argv value that would show in
+the box's process list.
+
+Credentials are seeded per box rather than baked into the `ready` checkpoint.
+That keeps the template credential-free, and nothing long-lived sits in a
+snapshot every clone inherits.
 
 **This hands live subscription tokens to anything with a shell on the box.**
 That is usually what you want on a box you drive yourself, and not what you
-want around an unattended agent — `./newbox.sh foo --no-auth` skips it, and
-`./seed-agent-auth.sh px-foo` can add them later.
-
-Re-seed an existing box the same way; the access token is short-lived and each
-container refreshes its own copy independently.
-
-### How the laptop reaches a container
-
-Containers live on `incusbr0` (10.185.22.0/24), NAT'd behind geekom and not
-routable from the laptop. `pixels console` sidesteps this entirely (Incus exec
-API over HTTPS), but herdr and t3 both need real SSH, so `pixels-ssh.conf`
-hops through the box:
-
-```
-ProxyCommand ssh dpeckham@geekom.local 'nc $(dig +short %h.incus @10.185.22.1 | head -n1) 22'
-```
-
-The box has no systemd-resolved, so its own resolver cannot be taught the
-`.incus` zone; asking the bridge's dnsmasq directly avoids configuring
-anything on the box and keeps container IPs dynamic.
-
-Host keys are kept in `~/.ssh/known_hosts.pixels`. Since every clone
-regenerates its host key and names get recycled, `newbox.sh` clears the stale
-entry on each create. Do not set `UserKnownHostsFile=/dev/null` to avoid that
-— `herdr machine add` fails with "lost connection to server" when host keys
-are not persisted.
-
-Agent forwarding is deliberately off: these containers run AI coding agents,
-and forwarding the 1Password agent would hand them your keys. Use `gh auth
-login` or a scoped deploy key inside the container.
+want around an untrusted unattended agent. `./newbox.sh foo --no-auth` skips
+it, and `./seed-agent-auth.sh px-foo` adds them later.
 
 ### Egress allowlist
 
 `--egress agent` installs an nftables ruleset (default `policy drop`, with the
-resolved allowlist in an `allowed_v4` set) and swaps the blanket `NOPASSWD`
-sudo for a restricted one, so an agent cannot switch the firewall off. Package
-installs then go through the wrapper rather than apt directly:
+resolved allowlist in an `allowed_v4` set). It also swaps the blanket
+`NOPASSWD` sudo for a restricted one, so an agent cannot switch the firewall
+off. Package installs then go through the wrapper rather than apt directly:
 
 ```
 sudo safe-apt update
@@ -359,107 +594,160 @@ sudo safe-apt update
 
 The stock preset covers the AI APIs, npm/PyPI/crates/Go, GitHub and the Ubuntu
 mirrors. `pixels-config.toml` adds what this setup needs on top:
-`deb.debian.org` and `security.debian.org` (the preset has only Ubuntu
-mirrors), plus `herdr.dev` and `t3.codes` — without those two,
-`herdr machine add` and t3 pairing fail. Note the allowlist is IPv4-only; the
-chain is `policy drop` on an `inet` table, so IPv6 is dropped rather than
-allowed through (fail-closed, and moot here since the bridge hands out a ULA
-with no upstream route).
 
-### Gotchas
+- `deb.debian.org` and `security.debian.org`, because the preset has only
+  Ubuntu mirrors;
+- `herdr.dev` and `t3.codes`, without which `herdr machine add` and t3 pairing
+  fail.
 
-Three things here were found the hard way and will look like unrelated
-breakage if you hit them cold.
+The allowlist is IPv4-only. The chain is `policy drop` on an `inet` table, so
+IPv6 is dropped rather than allowed through.
+
+## Gotchas
+
+Each of these was found the hard way and will look like unrelated breakage
+if you hit it cold.
 
 **pixels 0.6.2 silently half-provisions.** Leave `provision.devtools = false`.
 With it enabled, the Incus backend pushes
-`/home/pixel/.config/mise/config.toml` without creating the parent directory;
-the Incus file API does not create parents, and the error is discarded by
+`/home/pixel/.config/mise/config.toml` without creating the parent directory.
+The Incus file API does not create parents, and the error is discarded by
 `_ = err` in `sandbox/incus/backend.go`. Provisioning aborts *before*
-`rc.local` runs, so the container comes up with no `pixel` user and no sshd
-while `pixels create` still reports success. `base-setup.sh` installs a fuller
-toolchain than the devtools step would anyway.
+`rc.local` runs, so the container comes up with no `pixel` user and no sshd,
+while `pixels create` still reports success.
+
+**`pixels exec` with stdin attached allocates a PTY.** Piped input is echoed
+back and EOF never arrives, so `… | pixels exec box -- sh -c 'cat > f'` hangs
+forever. Pass data as arguments (as `newbox.sh` does for keys), or use
+`incus file push`.
 
 **t3 must not be installed from npm.** mise's npm backend does not fetch
-node-pty's native module, so `npm:t3` yields a `t3` that answers
-`t3 --version` but dies on `t3 serve` with "Failed to load native module:
-pty.node". The vendor's release tarball ships `build/Release/pty.node` and its
-own client assets, so it is installed through mise's `http` backend with
-`bin_path` pointing at the extracted directory rather than a lone binary.
+node-pty's native module. `npm:t3` yields a `t3` that answers `t3 --version`
+but dies on `t3 serve` with "Failed to load native module: pty.node". The
+vendor's release tarball ships `build/Release/pty.node`, so it is installed
+through mise's `http` backend with `bin_path` pointing at the extracted
+directory.
 
-**Do not stop persisting SSH host keys.** Every clone regenerating its own host
-key (see above) makes `~/.ssh/known_hosts.pixels` go stale whenever a name is
-reused, and the obvious fix — `UserKnownHostsFile=/dev/null` — breaks
-`herdr machine add` with "lost connection to server". `newbox.sh` clears the
-stale entry at create time instead.
+**Non-interactive SSH sees no mise activation.** `ssh host cmd` is neither a
+login nor an interactive shell, and Debian's `.bashrc` returns early, so
+`base-setup.sh` puts the mise shims on PATH via `/etc/environment` (pam_env).
+That is what makes `herdr`, T3 and Paperclip's SSH runs find their tools. The
+Paperclip container does the same for its systemd user service through
+`~/.config/environment.d`.
 
-One non-issue worth recording, since it looks alarming: under `--egress agent`,
-`sudo apt-get update` fails with a password prompt. That is not the firewall.
-pixels deliberately replaces blanket `NOPASSWD` sudo with a restricted list so
-an agent cannot disable nftables; use `sudo safe-apt` instead.
+**Agents on SSH environments need `engine: "cli"`.** `claude_local` and
+`codex_local` default to their ACP engine, which supports sandbox targets
+only. On an SSH environment, every run fails in under a second with
+`adapter_engine_unavailable`: "Claude ACP supports sandbox remote targets
+only…". `newproject.sh` sets `adapterConfig.engine = "cli"`. For an agent
+made by hand, set it in the agent's adapter settings.
+
+**Distro herdr may predate `herdr machine`.** Registration arrived in 0.9.
+Older packaged builds (0.8.x) only have `herdr --remote <target>`, which needs
+no registration at all. `newbox.sh` detects which one it has and treats
+registration as best-effort, so herdr can never fail a box.
+
+**Copied Claude logins log each other out.** Claude rotates its refresh token
+on every refresh, so copies of one `~/.claude/.credentials.json` on several
+machines fail with "OAuth session expired and could not be refreshed" as soon
+as any one of them refreshes. Use the long-lived token (**Agent
+credentials**).
+
+**Paperclip can't verify a Claude subscription connection** (as of
+2026.1001). Its check calls Anthropic's usage endpoint without a Claude Code
+`User-Agent`, gets 429, and reports "Could not verify the local subscription".
+Nothing here depends on that flow: agents authenticate with the token bound
+on their environment.
+
+**mise must trust Paperclip's staging directory.** Each agent run on a box
+happens in a fresh directory with the repo's `mise.toml` copied in. mise
+refuses untrusted config, and Paperclip's callback bridge starts `node`
+through the shims, so every issue-bound run died with "Config files in … are
+not trusted" before the agent started. `base-setup.sh` sets
+`trusted_config_paths` to the staging root.
+
+**A run started without an issue can't write to issues.** A bare "wake now"
+(the agent's Run button, or `POST /agents/:id/wakeup` with no issue) runs
+with no issue scope. Every comment or status change it makes gets 403
+(`cross_issue_…`), and it gets an empty fallback workspace instead of the
+project's. Wake agents through their issues: assign one, or comment on it.
+
+**Restricted projects block snapshots by default.** Without
+`restricted.snapshots=allow`, `pixels checkpoint create` fails, and so does
+every `--from base:ready` clone.
+
+**AppImages work without SUID `fusermount`.** They print `trying to
+unshare...` and fall back to user namespaces. That's expected, not a failure.
+
+One non-issue worth recording, since it looks alarming: under `--egress
+agent`, `sudo apt-get update` fails with a password prompt. That's not the
+firewall. pixels deliberately replaces blanket `NOPASSWD` sudo with a
+restricted list; use `sudo safe-apt` instead.
 
 ## Working with Incus directly
 
-Everything above goes through pixels. These are the underlying commands, for
-one-off containers and for digging into what pixels built.
-
-`firstboot.sh` also creates a `dev` profile (4 CPU / 6GB, nesting on) and two
-shared volumes on the pool — `cache` → `/cache` and `repos` → `/repos`. Both
-predate the pixels workflow and nothing uses them now (`incus profile list`
-shows `dev` at 0), since pixels containers are deliberately self-contained.
-They are kept because they are the right shape for a hand-rolled container
-that wants storage shared with its siblings.
+Everything above goes through pixels and the scripts. These are the underlying
+commands, for one-off containers and for digging into what pixels built. Add
+`--project agents` for project boxes.
 
 ```
-incus launch images:debian/13 proj-foo --profile default --profile dev
-incus exec proj-foo -- bash
+incus list --all-projects                 # everything, both projects
+incus snapshot create px-foo clean --project agents     # before letting an agent loose
+incus snapshot restore px-foo clean --project agents
+incus exec px-foo --project agents -- bash
+incus config set px-foo limits.memory=8GiB --project agents   # counts against the project cap
+incus file push ./thing px-foo/root/ --project agents
 ```
 
-### Snapshot before letting an agent loose
+Need a VM instead (kernel isolation, awkward Docker stacks)? Restricted
+projects allow VMs, but not the low-level options:
 
 ```
-incus snapshot create proj-foo clean      # take
-incus snapshot restore proj-foo clean     # roll back
-incus snapshot list proj-foo
-```
-
-### Everyday commands
-
-```
-incus list                                # what's running
-incus stop proj-foo / incus start proj-foo
-incus delete proj-foo --force             # gone (shared volumes survive)
-incus file push ./thing proj-foo/root/    # copy in
-incus file pull proj-foo/root/out.txt .   # copy out
-incus exec proj-foo -- <cmd>              # run one command
-incus config set proj-foo limits.memory=12GiB   # bump a limit
-```
-
-### Make a golden template by hand
-
-The scripted path is **Dev base image** above; this is the manual equivalent:
-
-```
-incus stop proj-base
-incus publish proj-base --alias dev-base
-incus launch dev-base proj-new --profile default --profile dev
-```
-
-### Need a VM instead (kernel isolation, awkward Docker stacks)
-
-```
-incus launch images:debian/13 proj-vm --vm --profile default -c limits.memory=8GiB
+incus launch images:debian/13 vm-foo --vm --project agents -c limits.cpu=4 -c limits.memory=8GiB
 ```
 
 ## Maintenance
 
-- Host updates: `ssh geekom.local`, `sudo apt update && sudo apt full-upgrade`.
-  A kernel update triggers a ZFS DKMS rebuild; reboot after.
-- Pool health: `sudo zpool status` on the box.
-- Backups: `incus export px-emaax emaax.tar.gz` for a whole container.
-  Project boxes are cheap to rebuild from `newbox.sh`, so what is worth
-  backing up is whatever has not been pushed to its remote yet.
-- Dev image: see **Updating the image** above; the host's `apt full-upgrade`
-  does not touch containers.
-- If the box's IP changes and the remote is pinned to it:
-  `incus remote set-url box https://geekom.local:8443`
+- **Paperclip:** `paperclipai update` inside the container. It keeps the
+  previous payload (`--rollback`) and backs up the DB first. Snapshot the whole
+  container before big jumps: `incus snapshot create paperclip pre-update`.
+- **Paperclip data** is the one stateful thing here. It takes its own daily DB
+  dumps in `~/.paperclip/instances/default/data/backups`. For a full copy,
+  `incus export paperclip paperclip.tar.gz`.
+- **Project boxes** are cheap to rebuild with `newbox.sh`. What's worth saving
+  is whatever has not been pushed to its remote yet.
+- **Dev image:** see **Updating the image**. Host updates don't touch
+  containers.
+
+## Remote box layout (optional)
+
+The scripts above assume Incus runs on the machine you sit at. The original
+layout of this repo is a separate headless box, driven from a laptop. It is
+still supported:
+
+1. Install Debian 13 netinst on the box: no desktop, SSH server ticked, with a
+   spare raw partition for the ZFS pool. **Disable Secure Boot**, because the
+   ZFS DKMS module won't load with it on.
+2. From the laptop: `NO_TAILSCALE=1 ./bootstrap.sh <ip> <user> /dev/<partition>`.
+   It copies your key, runs `firstboot.sh` as root (ZFS, Incus on the ZFS pool,
+   Avahi, Tailscale, key-only sshd, a 4GB ARC cap, nc/dig for the SSH hop),
+   registers the box as the Incus remote `box`, and reboots it.
+   `firstboot.sh` serves the API on `[::]:8443`, since the laptop has to reach it.
+3. On the box: `NO_DNS=1 ./host-setup.sh` to create the `agents` project.
+   There's no mise there, so it stops after that, and leaves the existing API
+   address alone.
+4. On the laptop: `BOX_HOST=<box>.local ./laptop-setup.sh` for pixels and the
+   ProxyCommand SSH block.
+5. Build the base image with the commands under **Updating the image**, with `box:` in front of
+   instance names (`incus exec box:px-base --project agents …`).
+
+`firstboot.sh` also creates a `dev` profile and two shared volumes (`cache`,
+`repos`) from before pixels. Nothing uses them; they are there for
+hand-rolled containers that want storage shared with siblings.
+
+Paperclip is not scripted for this layout yet. `paperclip-up.sh` assumes the
+local Incus socket, and it seeds credentials from the machine it runs on.
+
+If bootstrap did not finish the remote step: on the box run `incus config
+trust add laptop`, then on the laptop `incus remote add box <box>.local
+--token <token> --accept-certificate`. Tokens are single-use.

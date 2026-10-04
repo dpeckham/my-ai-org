@@ -1,25 +1,20 @@
-# pixels -> the geekom Incus daemon.
+# Shared pixels settings. Not a complete config on its own.
 #
-# Install to the path Go's os.UserConfigDir() reports, which on macOS is
-# ~/Library/Application Support/pixels/config.toml (NOT ~/.config/pixels).
-# laptop-setup.sh keeps the real file in ~/.config/pixels and symlinks it there.
-backend = "incus"
-
-[incus]
-# Reached over mDNS so a new DHCP lease on the box does not break the config.
-# TLS is pinned to the cert incus already trusts, so the hostname is not
-# security-relevant here.
-remote      = "https://geekom.local:8443"
-client_cert = "~/Library/Application Support/incus/client.crt"
-client_key  = "~/Library/Application Support/incus/client.key"
-server_cert = "~/Library/Application Support/incus/servercerts/box.crt"
-project     = "default"
+# host-setup.sh, laptop-setup.sh and paperclip-up.sh each write
+# ~/.config/pixels/config.toml as `backend = "incus"`, an [incus] table saying
+# how *that* caller reaches the daemon (local socket, or HTTPS with a client
+# certificate), and then this file verbatim. Everything that should be the
+# same no matter who creates a box lives here.
+#
+# Every caller targets the `agents` Incus project, which host-setup.sh creates
+# restricted (no privileged containers, no host-path disks) and capped. That
+# is what makes it safe to hand pixels to an agent.
 
 [defaults]
-image   = "debian/13"      # matches the host; glibc (see README on Alpine/NixOS)
+image   = "debian/13"      # glibc; see README on Alpine/NixOS
 cpu     = "4"
-memory  = 6144
-pool    = "default"
+memory  = 4096             # MiB. The project's limits.memory counts this for
+                           # every box, stopped or not -- see README.
 network = "incusbr0"
 
 [ssh]
@@ -37,7 +32,7 @@ enabled = true
 devtools = false
 
 [network]
-egress = "unrestricted"    # per-container: pixels create --egress agent
+egress = "unrestricted"    # per-container: newbox.sh --egress agent
 # The built-in `agent` preset allowlists archive.ubuntu.com / security.ubuntu.com
 # but no Debian mirrors, so apt breaks on a Debian base under restricted egress.
 # herdr.dev and t3.codes are the control planes' own update/pairing hosts and
