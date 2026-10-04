@@ -242,6 +242,11 @@ company.
 - **Agent forwarding is off** everywhere, so no box can borrow your SSH keys.
 - **An optional egress allowlist** (`--egress agent`) limits a box to the
   hosts on an approved list.
+- **This repo refuses pushes that contain a credential.** Secret scanning and
+  push protection are on, which makes CLAUDE.md's "no secrets" rule something
+  GitHub enforces at the push rather than something a reviewer has to catch.
+  Dependabot alerts and security updates are on too, so a vulnerable
+  dependency arrives as a pull request.
 
 The sections after **Repository layout** cover each piece in depth.
 
@@ -250,6 +255,7 @@ The sections after **Repository layout** cover each piece in depth.
 ```
 README.md           this manual
 install.sh          the one command
+.github/            this repo's own Dependabot config (and CI, when it lands)
 CLAUDE.md           rules for agents working in this repo (including the DevOps agent)
 templates/          instructions (AGENTS.md) for every agent role
 skills/             skills the agents load, and sources.manifest listing which roles get which
@@ -983,6 +989,14 @@ only. On an SSH environment, every run fails in under a second with
 `adapter_engine_unavailable`: "Claude ACP supports sandbox remote targets
 only…". `newproject.sh` sets `adapterConfig.engine = "cli"`. For an agent
 made by hand, set it in the agent's adapter settings.
+
+**Push protection rejects the push, not the commit.** If a credential reaches
+a commit, `git push` fails with `GH013: Repository rule violations found`,
+naming the secret and the commit. Amending or reverting it in a later commit is
+not enough, because the secret is still in the history being pushed — rewrite
+the branch so the credential is in no commit at all. Rotate it regardless: it
+was on disk and in a push attempt. The error offers a bypass URL; do not use
+it here, where the history is public.
 
 **Distro herdr may predate `herdr machine`.** Registration arrived in 0.9.
 Older packaged builds (0.8.x) only have `herdr --remote <target>`, which needs

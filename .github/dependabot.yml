@@ -1,0 +1,10 @@
+# Dependabot keeps the one dependency ecosystem this repo actually has under
+# watch: the actions pinned in our own workflows. There is no package.json —
+# scripts/github-bridge.mjs imports only Node builtins — and the shell scripts
+# depend on what the base image provides, neither of which Dependabot reads.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
