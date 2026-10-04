@@ -242,11 +242,18 @@ company.
 - **Agent forwarding is off** everywhere, so no box can borrow your SSH keys.
 - **An optional egress allowlist** (`--egress agent`) limits a box to the
   hosts on an approved list.
-- **This repo refuses pushes that contain a credential.** Secret scanning and
-  push protection are on, which makes CLAUDE.md's "no secrets" rule something
-  GitHub enforces at the push rather than something a reviewer has to catch.
-  Dependabot alerts and security updates are on too, so a vulnerable
-  dependency arrives as a pull request.
+- **This repository refuses pushes that contain a credential** — this one, not
+  the repos of the projects it installs. Secret scanning and push protection
+  are on here, which makes CLAUDE.md's "no secrets" rule something GitHub
+  enforces at the push rather than something a reviewer has to catch. Nothing
+  in `install.sh` turns either on for a project's repos, and that is the gap
+  worth knowing about, because a project box holds your live credentials and
+  the Coder pushes from it; closing it is
+  [#11](https://github.com/dpeckham/my-ai-org/issues/11). Dependabot alerts
+  and security updates are on here too, and the alert is the one that reaches
+  this company — the bridge files it as a Paperclip issue for the Security
+  role, while the update pull requests stay on GitHub, because bot-authored
+  pull requests (Dependabot's included) wake nobody.
 
 The sections after **Repository layout** cover each piece in depth.
 
