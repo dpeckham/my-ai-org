@@ -75,6 +75,20 @@ Settled by observation rather than by asking:
 
 ### In flight
 
+- **A second brief, on the runtime itself**
+  ([briefs/agent-runtime.md](briefs/agent-runtime.md)) — the operator's framing
+  of Paperclip as triggers plus portable Claude/Codex invocations, made exact,
+  and what it looks like on macOS and Linux. Four additive refinements to
+  [0004](decisions/0004-github-native-is-the-single-project-edition.md) (the
+  wake payload is the unnamed half of the port; coordination state lives in the
+  GitHub thread, not the box; the dispatcher sits on the host and mints a
+  one-hour token per run; role context resolves only at the default branch) and
+  three roadmap consequences ([#3](https://github.com/dpeckham/my-ai-org/issues/3)
+  step 1 is on M6's critical path, #3's broker drops out of this edition, and
+  macOS needs an answer for Macs that cannot run Apple's runtime). On branch
+  `pm/github-native-edition-brief` in
+  [PR #12](https://github.com/dpeckham/my-ai-org/pull/12), awaiting answers to
+  questions 5-7 below.
 - **This document and [ROADMAP.md](ROADMAP.md)** — the Product Manager
   kickoff, on branch `pm/roadmap-and-state`, in a pull request awaiting the
   operator's merge.
@@ -158,3 +172,15 @@ by observation. What is left:
 4. **Scope of [#2](https://github.com/dpeckham/my-ai-org/issues/2).** Is it
    "re-run the current sync against existing boxes", or a standing reconcile
    loop that detects drift on its own?
+5. **Coordination state in the GitHub thread?** One bot comment per issue,
+   edited in place, holding the cursor, the claim and the handoff log — which
+   is what makes a box disposable and a run resumable on any machine. The
+   alternative is a seen-state file in the box, as the bridge keeps today. See
+   [briefs/agent-runtime.md](briefs/agent-runtime.md) §3.
+6. **macOS: Apple's runtime, or a Linux VM?** Two backends, one blocked on
+   hardware, better kernel isolation and a Mac-native install; or one backend
+   that works on any Mac today, at the cost of a VM and a worse first
+   impression. §6 of the same brief.
+7. **Do we ship a no-container macOS tier with a warning?** It is what a client
+   with an Intel Mac will do anyway: documenting it is harm reduction, shipping
+   it is an endorsement, and the agent would hold the user's whole `$HOME`.

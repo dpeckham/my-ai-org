@@ -184,6 +184,16 @@ The operator has not contradicted that, and reversing it is one word.
   (see M3).
 - Dogfooded on this repo, GitHub-native, with the same agents and skills.
 
+**Open research, not yet decided:**
+[briefs/agent-runtime.md](briefs/agent-runtime.md) takes the runtime apart —
+triggers, the wake, and the four kinds of context an agent points at — and
+proposes four refinements to 0004 plus a macOS picture. The one that reaches
+back into this list: **step 1 of [#3](https://github.com/dpeckham/my-ai-org/issues/3),
+the backend verb layer, is the seam this milestone's dispatcher needs on either
+platform.** It is shared with M4, it is a Linux-only refactor, and it needs no
+Mac — so it is the first thing anyone can usefully do here. Awaiting the
+operator's answers to questions 5-7 in [STATE.md](STATE.md).
+
 **Done when:** one feature travels the full pipeline on this repo with no
 Paperclip running, and the operator answers one agent question by email.
 

@@ -5,6 +5,9 @@ decisions it led to are recorded in
 [decisions/0004](../decisions/0004-github-native-is-the-single-project-edition.md),
 which is the authoritative version. This brief is kept as the research behind
 it, not as live direction.
+**Continued in:** [briefs/agent-runtime.md](agent-runtime.md), which takes the
+runtime apart — triggers, the wake, and the four kinds of context an agent
+points at — and works out what it looks like on macOS and on Linux.
 **Question asked:** could the product run with GitHub alone as the control
 plane, for clients who have nowhere good to put the Paperclip half? Assume
 every client can run one long-running script and one container (LXC, or
