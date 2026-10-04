@@ -36,8 +36,10 @@ flight, what is blocked, what is next. Goals and milestones live in
   Paperclip supplies only a seven-verb coordination layer, so the route is to
   extract that port and write a second adapter rather than build a second
   product. GitHub's notification inbox turns out to need a classic PAT; an
-  App's own webhook delivery log is the better event source. No decision taken;
-  three questions for the operator at the end of the brief.
+  App's own webhook delivery log is the better event source. **Answered and
+  promoted** to
+  [decisions/0004](decisions/0004-github-native-is-the-single-project-edition.md);
+  the brief is kept as the research behind that record, not as live direction.
 - **A decision record of where this is going:**
   [#1](https://github.com/dpeckham/my-ai-org/issues/1), closed as completed —
   Paperclip as control plane, git as durable memory, one container per project.
@@ -49,6 +51,21 @@ By the operator, 2026-10-04:
 - **The first pipeline run is dogfooded on this repo**, and **M1 comes before
   M2** — prove the pipeline before putting CI on the installer. Recorded in
   [decisions/0002](decisions/0002-dogfood-the-pipeline-on-this-repo.md).
+- **Clients are a real, near-term goal** — there is one client in view, so plan
+  for it. Which settles the long-open "audience, and when" question: not the
+  operator's own machine first. M4 pulls forward, and macOS
+  ([#3](https://github.com/dpeckham/my-ai-org/issues/3)) becomes load-bearing
+  rather than optional, since a Mac-only client has no LXC.
+- **GitHub-native ships as the single-project edition of the same product**,
+  reached by extracting the seven-verb control-plane port and writing a second
+  adapter behind it — not as a fork. Event source: the App's own webhook
+  delivery log, with per-repo polling as the fallback; the notification inbox is
+  rejected because it accepts only a classic PAT. Recorded in
+  [decisions/0004](decisions/0004-github-native-is-the-single-project-edition.md),
+  now M6 in the roadmap.
+- **Still open, by omission:** whether M1 comes before that work. The brief's
+  recommendation (yes) stands as the default and is cheapest to reverse before
+  the port is extracted.
 
 Settled by observation rather than by asking:
 
@@ -112,12 +129,18 @@ In the order the roadmap argues for:
    no automated checking.
 3. **Confirm the operator is actually told things** (M3): stalled work, failed
    runs and budget burn.
+4. **Get ready for a client** (M4, and M6 behind it): a cold install on a
+   machine that is not this one, and the control-plane port. New as of the
+   audience answer above; it does not displace 1, and it does raise the
+   priority of the blocked macOS work, which needs hardware the operator has
+   to find.
 
 ### Open questions for the operator
 
-Two earlier questions are answered and have moved to **Decided** above: the
-dogfood target, and whether the pipeline or installer CI comes first. A third,
-what `budgetMonthlyCents: 0` means, was settled by observation. What is left:
+Three earlier questions are answered and have moved to **Decided** above: the
+dogfood target, whether the pipeline or installer CI comes first, and audience
+(clients, near-term). A fourth, what `budgetMonthlyCents: 0` means, was settled
+by observation. What is left:
 
 1. **Default trust posture.** Every box is seeded with live Claude, codex and
    `gh` credentials usable by anything with a shell on it, and the egress
@@ -128,11 +151,10 @@ what `budgetMonthlyCents: 0` means, was settled by observation. What is left:
    remaining question is a product one: what monthly ceiling should a new
    project get by default, and what should happen when it is reached — pause
    the team, or raise it to the operator and keep going?
-3. **Audience, and when.** Is "anyone else can install this" a near-term goal?
-   If so M2 and M4 move up; if this is the operator's own machine first, M1
-   and M3 matter more. The Paperclip-less brief sharpens this: "clients" is a
-   different answer again, and it pulls M4 forward hard. See
-   [briefs/github-native-edition.md](briefs/github-native-edition.md) §7.
+3. **Does M1 still come first?** Now that clients are real and near-term, M6
+   (the GitHub-native edition) competes with proving the pipeline. The
+   recommendation is M1 first; see **Decided** above. Answering "no" is the one
+   thing that would re-order **Next** above.
 4. **Scope of [#2](https://github.com/dpeckham/my-ai-org/issues/2).** Is it
    "re-run the current sync against existing boxes", or a standing reconcile
    loop that detects drift on its own?

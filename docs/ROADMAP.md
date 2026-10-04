@@ -31,6 +31,13 @@ Success, stated plainly: an operator installs this, adds their repos, and a
 week later finds merged pull requests they did not have to shepherd, and a
 short list of things only they could decide.
 
+There are now **two editions of the same product**, decided 2026-10-04 in
+[decisions/0004](decisions/0004-github-native-is-the-single-project-edition.md):
+the Paperclip edition above, and a **GitHub-native single-project edition** for
+a client with nowhere to host a control plane. Same pipeline, same roles, same
+skills; GitHub replaces Paperclip's coordination layer behind a thin port.
+Paperclip earns its place at project three. See M6.
+
 ## Where we are
 
 The system is **feature-complete on paper and almost entirely unexercised.**
@@ -120,12 +127,20 @@ has never been true in practice: every install so far is the one it was
 developed on. Portability failures are also the most expensive kind to find
 late.
 
+**Pulled forward 2026-10-04** (operator): clients are a real, near-term goal
+with one client in view, so this stopped being a README promise and became a
+dated requirement. See
+[decisions/0004](decisions/0004-github-native-is-the-single-project-edition.md).
+
 - A cold install verified on a machine that is not the development one, on
   each distro the README claims (Debian/Ubuntu, Arch, Fedora).
 - macOS as a second box backend: designed in
   [#3](https://github.com/dpeckham/my-ai-org/issues/3), waiting on someone
   with Apple silicon. Step 1 of that issue (the backend verb layer) is a
-  Linux-only refactor and can start any time.
+  Linux-only refactor and can start any time. **Now load-bearing, not
+  optional:** a Mac-only client has no LXC, so Apple's `container` is their
+  only backend, and access to a Mac with macOS 26 on Apple silicon is an
+  escalation for the operator rather than a background wish.
 - The first-run experience judged by someone who did not write it.
 
 ### M5 — The fleet stays current
@@ -139,6 +154,38 @@ M1 is the first instance of it.
   not just boxes it creates.
 - Skill, instruction and toolchain updates reach running projects without a
   full `install.sh`.
+
+### M6 — The GitHub-native edition
+
+**Why:** a client with nowhere to host Paperclip is nearly always a client with
+one project, who was never buying Paperclip's cross-project half. Decided in
+[decisions/0004](decisions/0004-github-native-is-the-single-project-edition.md),
+on the research in
+[briefs/github-native-edition.md](briefs/github-native-edition.md).
+
+**After M1, not instead of it:** a second control plane under a pipeline we
+have never seen run end to end leaves us unable to tell which half is broken.
+The operator has not contradicted that, and reversing it is one word.
+
+- Extract the **control-plane port**: the seven agent verbs (list my work, read
+  a thread, comment, set status, reassign, ask the human, create a child issue)
+  become one thin interface the skills and `templates/` call instead of
+  Paperclip's API. Worth doing on its own merits — it is how we stop being
+  exposed to Paperclip's experimental surface.
+- Settle the three spikes that can reshape or kill the design: delivery-log
+  retention, prompt assembly against a Paperclip wake payload, and the question
+  loop end to end including an operator answering only by email. Not yet filed
+  as issues.
+- A **dispatcher** in the box: event source, claims, a `git worktree` per run,
+  prompt assembly, the question loop. This is the real work, and the part
+  Paperclip gives us free today.
+- A **spend ledger and a kill switch in the box**, shared by both editions —
+  `budgetMonthlyCents: 0` enforces nothing today, so this is owed either way
+  (see M3).
+- Dogfooded on this repo, GitHub-native, with the same agents and skills.
+
+**Done when:** one feature travels the full pipeline on this repo with no
+Paperclip running, and the operator answers one agent question by email.
 
 ## Known defects
 
@@ -175,6 +222,11 @@ Deliberately not building these. Revisit only with a reason that has changed.
 - **Windows hosts, and macOS before #3's unknowns are settled on real
   hardware.**
 - **A hosted or multi-tenant service.** This installs on a machine its
-  operator controls. Nothing here is designed for untrusted tenants.
+  operator controls. Nothing here is designed for untrusted tenants. M6 does
+  not cross this line: it still installs on a machine the client controls.
+- **A second product with its own control plane.** The GitHub-native edition is
+  a second adapter behind one port, not a fork. A fork would mean paying for
+  every pipeline, role and skill change twice, for ever
+  ([0004](decisions/0004-github-native-is-the-single-project-edition.md)).
 - **Agents merging their own work.** Only the operator merges. Not a
   limitation to remove later.

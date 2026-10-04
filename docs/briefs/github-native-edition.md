@@ -1,6 +1,10 @@
 # Brief: a GitHub-native edition (no Paperclip)
 
-**Status:** research, no decision taken. Written for the operator, 2026-10-04.
+**Status:** answered and promoted. Written for the operator, 2026-10-04; the
+decisions it led to are recorded in
+[decisions/0004](../decisions/0004-github-native-is-the-single-project-edition.md),
+which is the authoritative version. This brief is kept as the research behind
+it, not as live direction.
 **Question asked:** could the product run with GitHub alone as the control
 plane, for clients who have nowhere good to put the Paperclip half? Assume
 every client can run one long-running script and one container (LXC, or
@@ -250,12 +254,19 @@ Each is small and each can kill or reshape the design:
    macOS work; this edition makes it load-bearing rather than optional, since
    a Mac-only client has no LXC.
 
-## 10. What I need from the operator
+## 10. What I need from the operator — answered 2026-10-04
 
 1. **Audience.** Is "clients" now a real near-term goal, or is this
-   contingency planning? It changes the roadmap's shape more than it changes
-   this design.
+   contingency planning?
+   → **Real and near-term: there is a client in view, plan for it.** So M4
+   pulls forward, and the blocked Apple-silicon work (§9.4) becomes
+   load-bearing rather than optional.
 2. **Sequencing.** Confirm M1 first (§8.1), or say explicitly that this
    outranks it.
+   → **Not answered.** §8.1 stands as the default: M1 first. One word reverses
+   it, and it is cheapest to say before the port is extracted.
 3. **Spike or shelve.** Shall I write up spikes 1–3 as issues now, or hold
    this brief until a client actually needs it?
+   → **Neither yet: promote this brief to a decision record and stop.** Done —
+   [decisions/0004](../decisions/0004-github-native-is-the-single-project-edition.md).
+   Spikes 1–3 are owed and deliberately unfiled.
