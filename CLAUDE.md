@@ -8,9 +8,11 @@ a human. `./install.sh` builds it all from a bare Linux machine, for its owner
 and for anyone else. The README is the manual; keep it true.
 
 Layout: `install.sh` and the docs at the top; every other script in
-`scripts/`; agent instructions in `templates/`; the manifest format in
-`examples/`; machine-local files (real project lists) in the gitignored
-`local/`. New scripts go in `scripts/`, and the top level stays this small.
+`scripts/` (shared helpers in `scripts/lib/`); agent instructions in
+`templates/`; agent skills in `skills/`, with `skills/sources.manifest`
+mapping skills to roles; the manifest format in `examples/`; machine-local
+files (real project lists) in the gitignored `local/`. New scripts go in
+`scripts/`, and the top level stays this small.
 
 ## Rules for changes
 
@@ -26,6 +28,13 @@ Layout: `install.sh` and the docs at the top; every other script in
   defaults updates the README in the same commit. A non-obvious failure you
   hit and fixed goes under **Gotchas** with the symptom someone would search
   for.
+- **Third-party skills:** reference them pinned to a commit in
+  `skills/sources.manifest` when used unchanged; copy into `skills/` only to
+  change them, with an attribution block in the SKILL.md and an entry in
+  `skills/THIRD_PARTY_NOTICES.md`. Check the licence allows it first.
+- **Re-running must upgrade, not just skip.** `git pull && ./install.sh` is the
+  upgrade path, so anything a script creates must be reconciled on later runs
+  (see `ensure_agent` in `scripts/lib/paperclip.sh`).
 - Scripts stay idempotent and keep their existing style: `set -euo pipefail`,
   `step` headings, comments that explain *why*.
 

@@ -1,31 +1,33 @@
 #!/usr/bin/env bash
-# The opinionated Paperclip organisation: the operator's root company with a
-# Chief of Staff at the top and a DevOps agent beside it. Idempotent.
+# The opinionated Paperclip organisation: the operator's root company and its
+# company-level agents. Idempotent; re-running it upgrades them.
 #
 #   scripts/paperclip-org.sh [--company "Name"]
 #
 #   company          the single root company. Created if there is none (asks
 #                    for a name, defaulting to "<git user.name>'s company");
 #                    adopted if there is exactly one.
-#   Chief of Staff   role ceo, so Product Managers report to it by default; claude.
-#   DevOps           role devops, reports to the Chief of Staff; claude, run
-#                    locally in the Paperclip container from its checkout of
-#                    this repo, where pixels/newproject.sh are set up for it.
+#   Chief of Staff   role ceo, so Product Managers report to it by default.
+#   CTO              role cto, reports to the Chief of Staff; runs a weekly
+#                    cross-project review (a Paperclip routine) for security,
+#                    engineering practice and compliance.
+#   DevOps           role devops, reports to the Chief of Staff; runs from its
+#                    checkout of this repo, where pixels and newproject.sh are
+#                    set up for it.
 #
-# Existing agents are matched by name and brought into line (runtime, role,
-# manager) without touching their instructions or history. Instructions are
-# only written when an agent is created, from templates/.
-#
-# Both run with engine=cli. claude's default ACP engine is the wrong choice on
-# SSH targets (see README, Gotchas); cli is used everywhere for one behaviour.
+# All three run claude, locally in the Paperclip container. Each project's own
+# team is created by scripts/newproject.sh. Agents are created or brought into
+# line by ensure_agent (scripts/lib/paperclip.sh), which also upgrades their
+# instructions from templates/ while they are still the ones this repo wrote.
 
 set -euo pipefail
 shopt -s inherit_errexit   # failures inside $(...) must stop the script too
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"   # repo root: templates/, local/
-PAPERCLIP="${PAPERCLIP:-http://127.0.0.1:3100}"
 COMPANY=""
+REVIEW_CRON="${REVIEW_CRON:-0 9 * * 1}"     # CTO review: Mondays 09:00
+REVIEW_TZ="${REVIEW_TZ:-$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --company) COMPANY="${2:?}"; shift 2 ;;
@@ -36,28 +38,18 @@ done
 step() { echo; echo "==> $*"; }
 info() { echo "    $*"; }
 die()  { echo "    !! $*" >&2; exit 1; }
-api() {  # api METHOD PATH [JSON]
-  local out code
-  out=$(mktemp)
-  code=$(curl -sS -o "$out" -w '%{http_code}' -X "$1" "$PAPERCLIP/api$2" \
-    -H 'Content-Type: application/json' ${3:+--data "$3"}) || { rm -f "$out"; die "cannot reach Paperclip at $PAPERCLIP"; }
-  [[ "$code" -lt 400 ]] || { echo "    !! $1 $2 -> HTTP $code: $(head -c 400 "$out")" >&2; rm -f "$out"; return 1; }
-  cat "$out"; rm -f "$out"
-}
-render() {  # render template-file -> stdout, with {{INFRA_REPO_DIR}} filled
-  local t; t=$(<"$1")
-  printf '%s' "${t//\{\{INFRA_REPO_DIR\}\}/$INFRA_DIR}"
-}
+. "$HERE/lib/paperclip.sh"
 
 curl -fsS -o /dev/null "$PAPERCLIP/api/health" || die "Paperclip is not answering at $PAPERCLIP (run paperclip-up.sh)"
 
 # Where paperclip-up.sh checked this repo out inside the container.
-ORIGIN=$(git -C "$HERE" remote get-url origin 2>/dev/null || true)
+ORIGIN=$(git -C "$ROOT" remote get-url origin 2>/dev/null || true)
 if [[ "$ORIGIN" =~ github\.com[:/]([^/]+)/([^/.]+)(\.git)?$ ]]; then
-  INFRA_DIR="/home/paperclip/code/${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+  INFRA_REPO_DIR="/home/paperclip/code/${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
 else
-  INFRA_DIR="/home/paperclip/code/my-ai-org"
+  INFRA_REPO_DIR="/home/paperclip/code/my-ai-org"
 fi
+export INFRA_REPO_DIR
 
 # ------------------------------------------------------------------ company
 step "Company"
@@ -81,56 +73,36 @@ else
     description: "The operator'"'"'s root company. Every project lives here."}')" | jq -r .id)
 fi
 info "$(api GET "/companies/$CID" | jq -r .name) ($CID)"
-
-AGENTS=$(api GET "/companies/$CID/agents")
 LOCAL_ENV=$(api GET "/companies/$CID/environments" | jq -r '[.[] | select(.driver == "local")][0].id // empty')
-
-# ensure_agent NAME ROLE TITLE TEMPLATE MANAGER_ID EXTRA_ADAPTER_JSON -> prints id
-ensure_agent() {
-  local name="$1" role="$2" title="$3" template="$4" manager="$5" extra="$6" id cur body
-  id=$(jq -r --arg n "$name" '.[] | select((.name | ascii_downcase) == ($n | ascii_downcase)) | .id' <<<"$AGENTS" | head -1)
-  if [[ -z "$id" ]]; then
-    body=$(jq -n --arg n "$name" --arg r "$role" --arg t "$title" --arg m "$manager" \
-      --arg env "$LOCAL_ENV" --arg md "$(render "$template")" --argjson x "$extra" '{
-        name: $n, role: $r, title: $t, adapterType: "claude_local",
-        adapterConfig: ({engine: "cli"} + $x),
-        reportsTo: (if $m == "" then null else $m end),
-        defaultEnvironmentId: (if $env == "" then null else $env end),
-        instructionsBundle: {entryFile: "AGENTS.md", files: {"AGENTS.md": $md}}}')
-    id=$(api POST "/companies/$CID/agents" "$body" | jq -r .id)
-    info "$name: hired ($id)" >&2
-  else
-    cur=$(jq -c --arg id "$id" '.[] | select(.id == $id)' <<<"$AGENTS")
-    # An agent made by the onboarding wizard is bound to an AI connection, and
-    # Paperclip will not move it to another provider's harness: there is no
-    # way to unbind, and binding a Claude subscription connection trips its
-    # broken usage check (README, Gotchas). Leave its runtime alone.
-    if jq -e '(.runtimeConfig.aiConnection.provider // "anthropic") != "anthropic" and .adapterType != "claude_local"' <<<"$cur" >/dev/null; then
-      api PATCH "/agents/$id" "$(jq -c --arg r "$role" --arg t "$title" --arg m "$manager" \
-        '{role: $r, title: (.title // $t), reportsTo: (if $m == "" then .reportsTo else $m end)}' <<<"$cur")" >/dev/null
-      info "$name: exists ($id); role $role. Runtime left as $(jq -r .adapterType <<<"$cur"): bound to a $(jq -r .runtimeConfig.aiConnection.provider <<<"$cur") AI connection, which Paperclip cannot switch" >&2
-      echo "$id"; return
-    fi
-    # Switching runtime keeps the managed instructions, skills, timeouts and
-    # history; only the other adapter's own keys are dropped.
-    body=$(jq -c --arg r "$role" --arg t "$title" --arg m "$manager" --argjson x "$extra" '
-      {role: $r, title: (.title // $t), reportsTo: (if $m == "" then .reportsTo else $m end)}
-      + (if .adapterType == "claude_local" and .adapterConfig.engine == "cli" then {}
-         else {adapterType: "claude_local", replaceAdapterConfig: true,
-               adapterConfig: ((.adapterConfig // {}) | with_entries(select(.key | test(
-                 "^(instructions|paperclipSkillSync|graceSec|timeoutSec|cwd|env)"))) + {engine: "cli"} + $x)}
-         end)' <<<"$cur")
-    api PATCH "/agents/$id" "$body" >/dev/null
-    info "$name: exists ($id); runtime claude/cli, role $role" >&2
-  fi
-  echo "$id"
-}
 
 # ------------------------------------------------------------------- agents
 step "Agents"
-COS_ID=$(ensure_agent "Chief of Staff" ceo "Chief of Staff" "$ROOT/templates/chief-of-staff.md" "" '{}')
-ensure_agent "DevOps" devops "DevOps" "$ROOT/templates/devops-agent.md" "$COS_ID" \
-  "$(jq -n --arg d "$INFRA_DIR" '{cwd: $d}')" >/dev/null
+agent() {  # agent KEY NAME ROLE TEMPLATE MANAGER EXTRA_JSON -> id
+  A_COMPANY="$CID" A_NAME="$2" A_ROLE_KEY="$1" A_ROLE="$3" A_TITLE="$2" \
+  A_TEMPLATE="$ROOT/templates/$4" A_MANAGER="$5" A_ENV="$LOCAL_ENV" \
+  A_ADAPTER=claude_local A_EXTRA="$6" A_PROJECT="" A_BUDGET=0 ensure_agent
+}
+COS_ID=$(agent chief-of-staff "Chief of Staff" ceo chief-of-staff.md "" '{}')
+CTO_ID=$(agent cto "CTO" cto cto.md "$COS_ID" '{}')
+agent devops "DevOps" devops devops-agent.md "$COS_ID" "$(jq -n --arg d "$INFRA_REPO_DIR" '{cwd: $d}')" >/dev/null
+
+# --------------------------------------------------------- CTO review routine
+# A Paperclip routine opens an issue for the CTO on a schedule. Matched by
+# title, so re-runs update the schedule rather than adding a second routine.
+step "CTO review routine"
+ROUTINE_TITLE="Weekly engineering review"
+RID=$(api GET "/companies/$CID/routines" | jq -r --arg t "$ROUTINE_TITLE" \
+  '(if type == "array" then . else (.routines // .items // []) end) | .[] | select(.title == $t) | .id' | head -1)
+if [[ -z "$RID" ]]; then
+  RID=$(api POST "/companies/$CID/routines" "$(jq -n --arg t "$ROUTINE_TITLE" --arg a "$CTO_ID" '{
+    title: $t, assigneeAgentId: $a, priority: "medium",
+    description: "Review every project for security, engineering practice and compliance since the last review, as described in your instructions. File what you find in the affected repos, and summarise here for the Chief of Staff."}')" | jq -r .id)
+  api POST "/routines/$RID/triggers" "$(jq -n --arg c "$REVIEW_CRON" --arg z "$REVIEW_TZ" \
+    '{kind: "schedule", cronExpression: $c, timezone: $z}')" >/dev/null
+  info "created: \"$ROUTINE_TITLE\", $REVIEW_CRON ($REVIEW_TZ)"
+else
+  info "exists ($RID)"
+fi
 
 step "Done"
 echo "  UI: $PAPERCLIP"

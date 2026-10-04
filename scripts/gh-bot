@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# gh, acting as the company's GitHub App bot instead of the operator.
+#
+#   gh-bot <any gh arguments>
+#   gh-bot pr review https://github.com/o/r/pull/3 --approve --body-file r.md
+#
+# Installed at ~/.local/bin/gh-bot on every box and in the Paperclip container
+# (seed-agent-auth.sh does it). Used by every role except the Coder, so reviews
+# come from an identity separate from the operator's: GitHub never lets a PR's
+# author approve it, and the Coder authors as the operator.
+#
+# Each call mints a fresh installation token limited to the ONE repository the
+# command targets -- taken from -R/--repo, else a github.com URL or an `api
+# repos/<owner>/<repo>` path among the arguments, else the current directory's
+# origin -- so the token cannot reach any other repo even if it leaks. Tokens
+# last an hour and are never cached.
+#
+# Needs GITHUB_BOT_APP_ID and GITHUB_BOT_PRIVATE_KEY (PEM text) in the
+# environment; Paperclip binds both on the agents that should have them.
+# Needs gh, curl, jq and openssl.
+
+set -euo pipefail
+
+die() { echo "gh-bot: $*" >&2; exit 1; }
+[[ -n "${GITHUB_BOT_APP_ID:-}" ]] \
+  || die "GITHUB_BOT_APP_ID is not set; this agent has not been given the bot's credentials"
+[[ -n "${GITHUB_BOT_PRIVATE_KEY:-}" ]] \
+  || die "GITHUB_BOT_PRIVATE_KEY is not set; this agent has not been given the bot's credentials"
+for c in gh curl jq openssl; do command -v "$c" >/dev/null || die "$c is not installed"; done
+
+API=https://api.github.com
+b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+# ------------------------------------------------------- which repository?
+repo=""
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  case "${args[i]}" in
+    -R|--repo) repo="${args[i+1]:-}"; break ;;
+    --repo=*)  repo="${args[i]#--repo=}"; break ;;
+  esac
+done
+if [[ -z "$repo" ]]; then
+  for a in "$@"; do
+    if [[ "$a" =~ ^https://github\.com/([^/]+)/([^/#?]+) ]]; then
+      repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"; break
+    fi
+    # `gh-bot api repos/<owner>/<repo>/...` names the repo in the API path.
+    if [[ "${1:-}" == api && "$a" =~ ^/?repos/([^/]+)/([^/?]+) ]]; then
+      repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"; break
+    fi
+  done
+fi
+if [[ -z "$repo" ]]; then
+  origin=$(git remote get-url origin 2>/dev/null || true)
+  [[ "$origin" =~ github\.com[:/]([^/]+)/([^/]+)$ ]] && repo="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+fi
+repo="${repo%.git}"
+[[ "$repo" == */* ]] || die "cannot tell which repository this is for; pass --repo owner/name"
+
+# ----------------------------------------------------- app JWT (10 minutes)
+now=$(date +%s)
+header=$(printf '{"alg":"RS256","typ":"JWT"}' | b64url)
+payload=$(printf '{"iat":%d,"exp":%d,"iss":"%s"}' $((now - 60)) $((now + 540)) "$GITHUB_BOT_APP_ID" | b64url)
+# The key goes to openssl through a file descriptor, never through argv.
+signature=$(printf '%s.%s' "$header" "$payload" \
+  | openssl dgst -sha256 -binary -sign <(printf '%s\n' "$GITHUB_BOT_PRIVATE_KEY") | b64url) \
+  || die "could not sign with GITHUB_BOT_PRIVATE_KEY (is it a PEM private key?)"
+jwt="$header.$payload.$signature"
+hdrs=(-H "Authorization: Bearer $jwt" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+
+# --------------------------------------- repo-scoped installation token
+inst=$(curl -fsS "${hdrs[@]}" "$API/repos/$repo/installation" 2>/dev/null | jq -r '.id // empty') || true
+[[ -n "$inst" ]] || die "the bot is not installed on $repo (install the GitHub App on that account, or check the app ID)"
+token=$(jq -n --arg r "${repo#*/}" '{repositories: [$r]}' \
+  | curl -fsS -X POST "${hdrs[@]}" "$API/app/installations/$inst/access_tokens" --data @- \
+  | jq -r '.token // empty') || true
+[[ -n "$token" ]] || die "GitHub refused an installation token for $repo"
+
+GH_TOKEN="$token" exec gh "$@"

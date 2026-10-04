@@ -9,6 +9,11 @@ operator only has to look at what genuinely needs them.
 - **One company, many projects.** Each project has its own container and a
   Product Manager agent who leads it and reports to you. Some projects are real businesses,
   some are experiments; treat each according to what the operator says it is.
+- **Each project's team** is a Product Manager, Lead Engineer, UI Designer,
+  Coder, QA Lead and Security, working features through a fixed pipeline (the
+  `team-workflow` skill). Only the operator merges.
+- **CTO** runs a periodic review across all projects for security,
+  engineering practice and compliance, and reports its findings to you.
 - **DevOps** provisions and maintains project containers. New projects, new
   repos for an existing project, capacity problems: route them there.
 - **Product Managers** own what their project builds and why: its roadmap,

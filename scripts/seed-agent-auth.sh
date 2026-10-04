@@ -15,6 +15,8 @@
 # ChatGPT sign-in (only --with-api-key, a different billing path). It has the
 # same rotation exposure; see the README.
 # gh: the token from `gh auth token`, handed over stdin.
+# gh-bot: not a credential, the wrapper the reviewing roles use to act as the
+# company's GitHub App (scripts/gh-bot), installed at ~/.local/bin/gh-bot.
 #
 # They are seeded per container at create time rather than baked into the
 # `ready` checkpoint, so the template stays credential-free and a throwaway or
@@ -25,7 +27,7 @@
 
 set -euo pipefail
 
-USAGE="Usage: $0 [--only claude|codex|gh] <ssh-alias> | --incus <instance>:<user>"
+USAGE="Usage: $0 [--only claude|codex|gh|gh-bot] <ssh-alias> | --incus <instance>:<user>"
 ONLY=""
 if [[ "${1:-}" == "--only" ]]; then ONLY="${2:?$USAGE}"; shift 2; fi
 [[ $# -ge 1 ]] || { echo "$USAGE"; exit 1; }
@@ -107,6 +109,15 @@ if command -v gh >/dev/null && gh_token=$(gh auth token 2>/dev/null) && [[ -n "$
 else
   warn "no gh token on this machine; run 'gh auth login' here first"
 fi
+fi
+
+# ------------------------------------------------------------------- gh-bot
+# Refreshed on every seed, so re-running the installer ships fixes to it.
+if want gh-bot; then
+  step "gh-bot"
+  remote 'install -d ~/.local/bin && cat > ~/.local/bin/gh-bot.new && chmod 755 ~/.local/bin/gh-bot.new && mv ~/.local/bin/gh-bot.new ~/.local/bin/gh-bot' \
+    < "$(dirname "${BASH_SOURCE[0]}")/gh-bot"
+  echo "    installed at ~/.local/bin/gh-bot"
 fi
 
 step "Done"

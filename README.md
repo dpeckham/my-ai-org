@@ -53,7 +53,8 @@ cd <this-repo>
 | File | Why you'd touch it |
 |------|--------------------|
 | `local/projects.manifest` | **Which repos become projects.** Skip it on the first run, and the installer writes one listing every repo you can access, all commented out. Or start from the example: `mkdir -p local && cp examples/projects.manifest local/projects.manifest`. Never committed (`local/` is gitignored). |
-| `templates/*.md` | The instructions every Chief of Staff, DevOps and Product Manager agent starts with. Edit before installing to change them for new agents; existing agents are edited in the Paperclip UI. |
+| `templates/*.md` | The instructions each agent role starts with. Changes reach existing agents on the next `./install.sh` too, unless you've edited that agent's instructions in the Paperclip UI. |
+| `skills/sources.manifest` | Which skills each role gets, and where they come from. |
 | `scripts/pixels-config.toml` | Default size of a project box (4 CPU / 4GiB) and the egress allowlist. |
 
 Sizing is set by environment variables instead of a file. The default cap for
@@ -89,11 +90,14 @@ phases and skips any that are already done:
 | 1. sign-ins | `gh auth login`, and the long-lived Claude token (`claude setup-token`, then a hidden paste prompt), each only if missing |
 | 2. host | `scripts/host-setup.sh`: the restricted `agents` project, the Incus API on the bridge, `.incus` DNS, pixels |
 | 3. base image | the template every project box is cloned from, about 3 minutes the first time |
-| 4. paperclip | `scripts/paperclip-up.sh`: the Paperclip container, its service, credentials |
-| 5. org | `scripts/paperclip-org.sh`: your company, a Chief of Staff and a DevOps agent |
-| 6. projects | `scripts/provision.sh local/projects.manifest`, one box and one Product Manager per project |
+| 4. paperclip | `scripts/paperclip-up.sh`: the Paperclip container, its service, credentials, and the GitHub bridge |
+| 5. org | `scripts/paperclip-org.sh`: your company, a Chief of Staff, a CTO (with a weekly review) and a DevOps agent |
+| 6. GitHub bot | `scripts/github-apps.sh`: the GitHub App the reviewing roles act as. Two browser clicks the first time (create, install); after that, a check |
+| 7. projects | `scripts/provision.sh local/projects.manifest`: one box and a six-agent team per project |
+| 8. skills | `scripts/skills-sync.sh`: loads `skills/sources.manifest` into Paperclip and attaches each skill to the roles that use it |
+| 9. boxes | refreshes the tools this repo ships (`gh-bot`) on boxes that already exist |
 
-**The first run stops after phase 6 writes your project list.** Open
+**The first run stops after phase 7 writes your project list.** Open
 `local/projects.manifest`, uncomment the repos you want (several repos on
 one line become one project), then run it again:
 
@@ -108,16 +112,45 @@ line to hold it back.
 
 ### 6. After installing
 
-- **Paperclip:** <http://localhost:3100>. Your Chief of Staff, DevOps agent and
-  project Product Managers are in the org chart.
+- **Paperclip:** <http://localhost:3100>. The Chief of Staff, CTO, DevOps and
+  each project's team are in the org chart.
+- **Start a feature:** open an issue in Paperclip, assign it to a project's
+  Product Manager, and brainstorm with it there. It files the GitHub issue and
+  the team takes it from there (see **The team and its pipeline**).
 - **A project box:** `ssh px-<name>`, or `pixels console <name>`.
 - **More projects later:** add lines to the manifest and re-run, or
   `scripts/newproject.sh <name> <org/repo>`. Or ask the DevOps agent in
   Paperclip to do it.
 
 Options: `--company "Name"`, `--projects FILE`, `--no-projects`.
-`./install.sh` is idempotent: after a failure, fix the cause and run it again.
-On an existing install, a re-run brings everything up to date.
+
+### 7. Upgrading
+
+```
+git pull && ./install.sh
+```
+
+That's the whole upgrade, and it's safe to run any time. Every phase
+reconciles rather than skipping what exists:
+
+- **The template rebuilds** when `scripts/base-setup.sh` has changed (its
+  checksum is stored in the template). New boxes get the new toolchain;
+  existing boxes keep theirs until rebuilt.
+- **Paperclip updates itself** to the latest release (database backed up
+  first, previous version kept for `paperclipai update --rollback`), and the
+  container's tools upgrade. `PAPERCLIP_UPDATE=0 ./install.sh` skips both.
+- **Agents are brought into line:** missing team members are hired, and
+  runtime, role, manager and credentials are reconciled. Instructions are
+  rewritten from `templates/` **only while they are still exactly what this
+  repo last wrote**: each agent stores a checksum of that text. If you edited
+  an agent's instructions in the UI, they're left alone and the run says so.
+  `RESET_INSTRUCTIONS=1 ./install.sh` overwrites them anyway.
+- **Skills re-sync**, so new and changed skills reach every agent.
+- **`gh-bot` is refreshed** on existing boxes, and the GitHub bridge in the
+  Paperclip container.
+
+The installer also tells you when your checkout is behind its upstream.
+After a failure, fix the cause and run it again; finished work is skipped.
 
 ## Architecture
 
@@ -160,13 +193,16 @@ the board: you set direction and approve anything irreversible.
 - **Chief of Staff** (role `ceo`): turns your requests into work, sets
   priorities across projects, watches for stalled work and failed runs, and
   reports up.
+- **CTO:** a weekly review across all projects for security, engineering
+  practice and compliance; files what it finds and reports to the Chief of
+  Staff.
 - **DevOps:** provisions and maintains project boxes, using the same scripts
   you would.
-- **A Product Manager per project:** decides what the project builds and why.
-  You brainstorm with it, and it captures features as GitHub issues and keeps
-  the roadmap and state current.
-- **Specialists as needed:** developer, QA, marketing, CFO and so on, hired
-  into the org chart with their own instructions and budgets.
+- **A team per project:** a Product Manager (what to build and why), Lead
+  Engineer, UI Designer, Coder, QA Lead and Security. See **The team and its
+  pipeline**.
+- **More roles as needed:** marketing, CFO and so on, hired into the org chart
+  with their own instructions and budgets.
 
 Each project is a Paperclip *project* inside the one company, so work can be
 handed between projects with ordinary issue assignment. A project that grows
@@ -177,14 +213,18 @@ company.
 
 1. **Starting a project.** You, or DevOps, run `scripts/newproject.sh <name>
    <org/repo>`. It clones a box from the template, checks the repo out, and
-   creates the Paperclip side: an SSH environment pointing at the box, a Product Manager,
-   the project, and a kickoff issue.
-2. **An agent run.** When an agent is woken (an issue assigned, a comment, a
+   creates the Paperclip side: an SSH environment pointing at the box, the
+   project's six-agent team, the project, and a kickoff issue.
+2. **A feature.** You brainstorm with the Product Manager; it files a GitHub
+   issue; the Lead Engineer reviews it as a spec; the Coder builds it as a pull
+   request; Lead Engineer, UI Designer, QA Lead and Security review it in turn;
+   you merge.
+3. **An agent run.** When an agent is woken (an issue assigned, a comment, a
    schedule), Paperclip copies the project's workspace into a fresh directory
    on the box, runs `claude` or `codex` there over SSH, and copies the changes
    back. The agent reports progress to Paperclip through a tunnel inside that
    SSH session, so boxes need no network route to it.
-3. **Results.** Code lands as branches and pull requests on the project's
+4. **Results.** Code lands as branches and pull requests on the project's
    repo. Status, questions and blockers land as comments on the Paperclip
    issue, where the Chief of Staff and you see them.
 
@@ -193,6 +233,9 @@ company.
 - **Agents use your subscriptions, not API keys:** a long-lived Claude token
   (`claude setup-token`) and your codex and GitHub logins, installed into each
   box at creation and never baked into the template.
+- **Two GitHub identities.** The Coder acts as your account; every reviewing
+  role acts as one GitHub App (the bot), so reviews and approvals are separate
+  from the author, and only you merge.
 - **Paperclip's Incus access is restricted** to the `agents` project:
   unprivileged containers only, no host paths, capped memory, CPU and
   instance count.
@@ -208,7 +251,8 @@ The sections after **Repository layout** cover each piece in depth.
 README.md           this manual
 install.sh          the one command
 CLAUDE.md           rules for agents working in this repo (including the DevOps agent)
-templates/          instructions for the Chief of Staff, DevOps and Product Manager agents
+templates/          instructions (AGENTS.md) for every agent role
+skills/             skills the agents load, and sources.manifest listing which roles get which
 examples/           manifest format, with placeholder names
 local/              your project list and other machine-local files (gitignored)
 scripts/            everything install.sh runs, usable one at a time
@@ -220,11 +264,16 @@ scripts/            everything install.sh runs, usable one at a time
 | `base-setup.sh` | template container (root) | git, gh, mise, herdr, t3 and the agent CLIs in the base image |
 | `paperclip-up.sh` | Incus host | builds or updates the Paperclip container end to end |
 | `paperclip-setup.sh` | Paperclip container (root) | node, Paperclip and its service, pixels, incus client, SSH key |
-| `paperclip-org.sh` | Incus host | the root company, Chief of Staff and DevOps agents |
-| `newproject.sh` | host or Paperclip | one project: box, SSH environment, Product Manager agent, Paperclip project, kickoff issue |
+| `paperclip-org.sh` | Incus host | the root company, and the Chief of Staff, CTO and DevOps agents |
+| `newproject.sh` | host or Paperclip | one project: box, SSH environment, six-agent team, Paperclip project, kickoff issue |
 | `provision.sh` | host or Paperclip | `newproject.sh` for every line of a manifest, with a preflight and summary |
 | `list-repos.sh` | host | writes `local/projects.manifest` from every repo the `gh` login can see |
 | `newbox.sh` | host or Paperclip | a bare box: clone the base, authorize keys, seed creds, check out repos |
+| `github-apps.sh` | host | creates and installs the company's GitHub App bot; stores its key as Paperclip secrets |
+| `gh-bot` | boxes, Paperclip | `gh` acting as the bot, with a token scoped to one repo per call (installed at `~/.local/bin/gh-bot`) |
+| `skills-sync.sh` | host or Paperclip | loads `skills/sources.manifest` into Paperclip and attaches skills by role |
+| `github-bridge.mjs` | Paperclip container (timer) | polls each project's repos and turns GitHub activity into Paperclip work |
+| `lib/paperclip.sh` | — | shared helpers: the Paperclip API, and `ensure_agent`, which creates or reconciles an agent |
 | `set-claude-token.sh` | host | installs the long-lived Claude token on the host, in Paperclip, and on every box |
 | `seed-agent-auth.sh` | host | copies claude / codex / gh credentials into a box or the Paperclip container |
 | `t3-connect.sh` | host | connects the T3 Code client to a box from the CLI |
@@ -391,6 +440,148 @@ assignment and share roles like a CEO or DevOps agent. If a project later
 needs walled-off budgets and agents, it can be split into its own company,
 which the operator then runs alongside the first.
 
+### The team and its pipeline
+
+Every project gets the same six agents, named `<Project> <Role>`:
+
+| Role | Paperclip role | Owns | GitHub identity |
+|------|----------------|------|-----------------|
+| Product Manager | `pm` | what gets built and why: brainstorming with you, feature issues, roadmap, state | bot |
+| Lead Engineer | `engineer` | spec review before work starts; code review | bot |
+| UI Designer | `designer` | a design section on `ui` features before build; UI review of the PR | bot |
+| Coder | `engineer` | implementation: branch, commits, draft PR, review rounds | **you** |
+| QA Lead | `qa` | acceptance criteria actually met, tests, CI | bot |
+| Security | `security` | authn/authz, input handling, secrets, dependencies | bot |
+
+A feature is one Paperclip issue, reassigned from role to role; the GitHub
+issue and pull request carry the work itself:
+
+```
+you ⇄ Product Manager ─► GitHub issue ─► Lead Engineer (spec review) ─┬─► UI Designer (design, `ui` only) ─┐
+                                                                     └──────────────────────────────────┴─► Coder ─► draft PR ─► ready
+   ─► Lead Engineer (code review) ─► UI Designer (`ui` only) ─► QA Lead ─► Security ─► you merge
+```
+
+- **Handoffs are Paperclip assignments.** Each agent comments its outcome on
+  the Paperclip issue and reassigns it, which wakes the next one; nothing
+  polls or waits.
+- **Rework goes back through the chain.** An approval covers one commit, so
+  when the Coder changes code after a review, the PR starts again at the Lead
+  Engineer, and each reviewer checks only what changed since its last review.
+- **Security hands the PR to you** with the CI state, the commit every review
+  approved, and the merge command for the repo's settings. Only you merge.
+- **Telling agents apart.** Reviewing roles share the bot, so every review
+  starts with a bold role header (`**QA Lead review**`); the Coder's PRs carry
+  the label `agent` and its commits the trailer `Agent: Coder (Paperclip)`.
+- **Screenshots for `ui` features** go on a separate `pr-assets` branch and are
+  linked from the PR, because GitHub's CLI can't upload images.
+
+The full process, written for the agents, is the `team-workflow` skill.
+
+### Work that starts on GitHub
+
+**A project runs in exactly one Paperclip company.** The operator who runs it
+is the only one with agents working on it; everyone else contributes the
+ordinary way, by opening GitHub issues and pull requests. Two installs working
+the same repo would duplicate each other's work, because Paperclip's
+assignment is only a claim inside one install.
+
+Outside activity reaches the team through the **GitHub bridge**
+(`scripts/github-bridge.mjs`): a small poller in the Paperclip container, run
+by a systemd user timer every minute. Each project is polled at its own
+interval. It contains no AI and costs one or two GitHub API calls per repo per
+poll; an agent only runs when an event turns into a Paperclip issue or comment,
+which is what wakes it.
+
+| GitHub event | Becomes |
+|---|---|
+| a new issue (from anyone but the bot) | a triage issue for the **Product Manager**: accept and assign, ask for more, or decline |
+| a new PR without the `agent` label | a review issue for the **Lead Engineer**; it enters the pipeline at code review, and changes are requested from its author |
+| a human's comment on an issue or PR | a comment on the Paperclip issue tracking it (which wakes whoever holds it), or a Product Manager issue if nothing tracks it |
+| a failed CI run on the default branch | an issue for the **Lead Engineer** |
+| a new Dependabot alert | an issue for **Security** |
+
+- **Near real time, by interval:** 5 minutes by default; per project with
+  `scripts/newproject.sh <name> <repo> --watch-every 1m` (`30s`–`1d`, or `off`;
+  the timer's 1-minute tick is the floor). The company default is
+  `defaultIntervalSec` in the container's `~/.config/my-ai-org/bridge.json`.
+- **Polling only, by design.** GitHub webhooks would need a public URL into
+  Paperclip, which runs without a login because only your localhost can reach
+  it. Polling needs no inbound access at all.
+- **It starts from "now".** The first pass for a repo records the time and
+  routes nothing, so years of history don't flood the agents. To backfill after
+  an outage: `node ~/.local/share/my-ai-org/github-bridge.mjs --since <time>`
+  (add `--dry-run` to preview).
+- **Telling humans from agents.** Bots are skipped; so are posts that open with
+  an agent's role header (the Coder posts as your account, so its comments
+  start with `**Coder**`), and PRs labelled `agent`. Everything else counts as
+  human.
+- **Finding the tracking issue.** The bridge matches GitHub URLs in Paperclip
+  issue descriptions, so the team keeps the GitHub issue URL on the first line
+  and the PR URL on the second.
+- **Duplicates:** every Paperclip issue it opens carries an idempotency key, so
+  a re-read window or a retry never creates a second one.
+- Logs: `journalctl --user -u my-ai-org-github-bridge` in the container (the
+  full command is printed by `paperclip-up.sh`).
+
+### Skills
+
+Skills are delivered through **Paperclip's company skill library**, which
+gives the same skills to claude and codex agents alike. `skills/sources.manifest`
+lists each skill, where it comes from, and which roles get it;
+`scripts/skills-sync.sh` (phase 8) imports them and attaches them by role.
+
+| Skill | Source | Roles |
+|-------|--------|-------|
+| `team-workflow` | ours | everyone in a project, CTO, Chief of Staff |
+| `github-bot` | ours | every role that acts as the bot |
+| `coding-practices` | [dbaggott/claude-plugins](https://github.com/dbaggott/claude-plugins), unmodified, pinned to a commit | Lead Engineer, Coder, QA Lead, Security, CTO |
+| `issue-writing`, `spec-review`, `pull-requests`, `code-review` | adapted from [dbaggott/claude-plugins](https://github.com/dbaggott/claude-plugins) | by role, see the manifest |
+
+The rule for third-party skills: **use as-is by reference when possible**
+(`github:<owner>/<repo>/<path>@<commit>`), and copy into `skills/` only when
+we need to change something. Copies say where they came from and what changed,
+and `skills/THIRD_PARTY_NOTICES.md` records the licence obligations. The four
+adapted skills keep Dan Baggott's craft (issue quality, spec review, draft-first
+PRs, review method) and drop his process plumbing (enforcement hooks,
+watchers, claim labels, interactive prompts), which doesn't fit unattended
+runs or codex.
+
+Paperclip only imports local skills from approved directories, so the sync
+copies ours into the company's managed-skill directory in the container
+first. Removing a line from the manifest stops new agents getting that skill
+but doesn't detach it from existing ones.
+
+### The GitHub bot
+
+GitHub never lets a pull request's author approve it. The Coder authors as
+you, so every reviewing role acts as one **GitHub App**, `<your-login>-bot`.
+One App rather than one per role: an App per role only changes the name on a
+review, and the role header already does that.
+
+`scripts/github-apps.sh` (phase 6) creates it through GitHub's App manifest
+flow: a local page sends the App's definition to GitHub, you click **Create**,
+and the private key comes back to the script without any copying. Then you
+click **Install** and choose **All repositories**, so future project repos are
+covered. The key is stored in `~/.config/my-ai-org/github-app/` (mode 600)
+and as two Paperclip secrets, which `paperclip-org.sh` and `newproject.sh`
+bind on the reviewing agents only (`GITHUB_BOT_APP_ID`,
+`GITHUB_BOT_PRIVATE_KEY`). The Coder never gets it.
+
+Agents call `gh-bot` exactly like `gh`. Each call signs a short-lived App
+token and exchanges it for an installation token **limited to the one
+repository** the command targets, so a token can't reach other repos.
+
+The App's permissions are contents write, pull requests write, issues write,
+and read on checks, actions, statuses, security events and vulnerability
+alerts. Contents write isn't for pushing code: GitHub leaves an App's review
+out of a PR's review decision without it, so approvals would post but never
+count.
+
+Repos in an organisation you don't own need that org's owner to install the
+App. Until then, `gh-bot` fails there with a clear message, and the agent
+hands the issue to you rather than falling back to your account.
+
 ### Starting a project
 
 ```
@@ -398,7 +589,7 @@ scripts/newproject.sh <name> <org/repo> [<org/repo>...] [options]
 scripts/provision.sh  <manifest> [--dry-run]       # many at once
 ```
 
-`newproject.sh` takes a project from repo to a working Product Manager in seven steps. Each
+`newproject.sh` takes a project from repo to a working team in eight steps. Each
 step finds its object by name and skips it if it already exists, so a failed
 run can simply be repeated:
 
@@ -408,11 +599,14 @@ run can simply be repeated:
 | 2. host key | records the box's host key for the Paperclip user (strict checking needs it) |
 | 3. checkouts | the repos again, in the Paperclip container (see above for why) |
 | 4. environment | SSH environment `<name>` → `px-<name>`, then probes it |
-| 5. Product Manager | `<Name> Product Manager` (Paperclip's role value `pm`), `claude_local` or `codex_local`, on that environment, reporting to the CEO if there is one |
+| 5. team | `<Name> Product Manager`, `Lead Engineer`, `UI Designer`, `Coder`, `QA Lead`, `Security`, all on that environment. The Product Manager reports to the CEO if there is one; Coder to Lead Engineer; the rest to the Product Manager |
 | 6. project | project `<name>`, Product Manager as lead, one workspace per repo (the first is primary) |
 | 7. kickoff | an issue for the Product Manager: read the repos, write `docs/ROADMAP.md` + `docs/STATE.md`, open a PR. It is assigned as `todo`, so **the Product Manager starts working immediately** |
+| 8. GitHub watch | sets how often the GitHub bridge polls the project's repos (`--watch-every`), or reports the current interval |
 
-Options: `--prodmgr-adapter claude|codex`, `--prodmgr-model`, `--reports-to <agent>`,
+Options: `--prodmgr-adapter claude|codex`, `--prodmgr-model`,
+`--team-adapter claude|codex` (the other five), `--watch-every <duration>`,
+`--reports-to <agent>`,
 `--budget <dollars>`, `--prodmgr-instructions <file>`, `--no-kickoff`,
 `--egress agent` and `--no-auth` (both passed to `newbox.sh`), `--company`,
 and `--dry-run`. `scripts/newproject.sh --check` runs only the preflight.
@@ -468,14 +662,15 @@ Before the first run:
 | Agent | Role | Runs | Job |
 |-------|------|------|-----|
 | Chief of Staff | `ceo` | Paperclip container | triage, cross-project priorities, oversight, reporting to the operator |
+| CTO | `cto`, reports to Chief of Staff | Paperclip container | a weekly review across all projects (a Paperclip routine, Mondays 09:00 in your timezone; `REVIEW_CRON` / `REVIEW_TZ` change it) |
 | DevOps | `devops`, reports to Chief of Staff | Paperclip container, from its checkout of this repo | starts projects (`newproject.sh`), maintains boxes, keeps this repo current |
-| `<Name> Product Manager`, one per project | `pm` (Paperclip's role value), reports to Chief of Staff | the project's box | what the project builds and why: brainstorming with you, feature issues, roadmap, state |
 
-All of them run claude with `engine: cli`, on the long-lived token. Their
-instructions come from `templates/` and are written only when the agent is
-created; edit them in the UI afterwards. Existing agents are matched by name
-and brought into line (runtime, role, manager) without touching their
-instructions or history.
+Each project's six agents come from `newproject.sh` (see **The team and its
+pipeline**). All of them run claude with `engine: cli` on the long-lived token
+by default. Their instructions come from `templates/` and are upgraded on
+re-runs while they're unedited (see **Upgrading**); agents are matched by name,
+and each records its role in its metadata (`metadata.myAiOrg.role`), which is
+how skills and credentials find it.
 
 There's one exception. An agent created by Paperclip's own onboarding wizard
 is bound to an "AI connection", and Paperclip won't move a bound agent to
@@ -547,8 +742,9 @@ Debian 13 ships a newer git than Ubuntu 24.04 (2.47 vs 2.43). Change
 
 ### Updating the image
 
-`base-setup.sh` is idempotent, so updating means re-running it on the template
-and taking a fresh checkpoint. Existing boxes are unaffected; they are
+`./install.sh` does this for you whenever `scripts/base-setup.sh` has changed
+(see **Upgrading**). By hand: `base-setup.sh` is idempotent, so updating means
+re-running it on the template and taking a fresh checkpoint. Existing boxes are unaffected; they are
 already-diverged clones.
 
 ```
@@ -817,6 +1013,23 @@ not trusted" before the agent started. `base-setup.sh` sets
 with no issue scope. Every comment or status change it makes gets 403
 (`cross_issue_…`), and it gets an empty fallback workspace instead of the
 project's. Wake agents through their issues: assign one, or comment on it.
+
+**`exit` under `su -` in a Debian container returns 1.** A login shell runs
+`~/.bash_logout` on `exit`, and Debian's stock one ends with a test for a
+`clear_console` program the container doesn't have. The failed test becomes
+the shell's status, so `su - user -c '…; exit 0'` reports failure. Scripts
+that run snippets that way (`incus exec … su - paperclip -c`) use if/else
+instead of an early `exit`.
+
+**`incus exec` eats the input of the loop around it.** It reads stdin, so
+`while read line; do incus exec …; done < file` processes only the first line.
+Read loops on another file descriptor (`read <&3 … done 3< file`).
+
+**Paperclip imports local skills only from approved directories:** its
+company managed-skill directory (`~/.paperclip/instances/default/skills/<company>/`)
+or a project workspace. Anywhere else fails with
+`skill_workspace_boundary_denied`, which is why `skills-sync.sh` copies skills
+there first.
 
 **Restricted projects block snapshots by default.** Without
 `restricted.snapshots=allow`, `pixels checkpoint create` fails, and so does

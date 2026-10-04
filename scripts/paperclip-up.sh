@@ -19,7 +19,8 @@
 #   - this machine's claude / codex / gh credentials seeded, unless --no-auth.
 #
 # Knobs (env): NAME, PROJECT, BRIDGE, PORT, PC_CPU, PC_MEMORY,
-# PAPERCLIP_TELEMETRY=on.
+# PAPERCLIP_TELEMETRY=on, PAPERCLIP_UPDATE=0, WATCH_EVERY_SEC (default GitHub
+# polling interval per project, first install only; default 300).
 
 set -euo pipefail
 
@@ -69,7 +70,8 @@ done
 step "Toolchain + Paperclip (paperclip-setup.sh)"
 incus file push "$HERE/paperclip-setup.sh" "$NAME/root/paperclip-setup.sh" --project default
 incus exec "$NAME" --project default \
-  --env PAPERCLIP_TELEMETRY="${PAPERCLIP_TELEMETRY:-off}" -- bash /root/paperclip-setup.sh
+  --env PAPERCLIP_TELEMETRY="${PAPERCLIP_TELEMETRY:-off}" --env PAPERCLIP_UPDATE="${PAPERCLIP_UPDATE:-1}" \
+  -- bash /root/paperclip-setup.sh
 
 # ------------------------------------------------------------ host access
 # bind=host: listen on this host's loopback, connect to the container's.
@@ -111,6 +113,40 @@ step "pixels config for $PC_USER"
   cat "$HERE/pixels-config.toml"
 } | in_pc 'install -d ~/.config/pixels && cat > ~/.config/pixels/config.toml'
 in_pc 'pixels list' >/dev/null && echo "pixels reaches the $PROJECT project"
+
+# ----------------------------------------------------------- GitHub bridge
+# Polls each project's repos and turns GitHub activity into Paperclip work
+# (scripts/github-bridge.mjs has the routing table). A systemd user timer
+# fires every minute; each project is polled at its own interval, set in
+# ~/.config/my-ai-org/bridge.json (newproject.sh --watch-every). Refreshed on
+# every run, so fixes ship with `git pull && ./install.sh`.
+step "GitHub bridge"
+in_pc 'install -d ~/.local/share/my-ai-org && cat > ~/.local/share/my-ai-org/github-bridge.mjs' < "$HERE/github-bridge.mjs"
+in_pc "install -d ~/.config/my-ai-org && [ -f ~/.config/my-ai-org/bridge.json ] || echo '{\"defaultIntervalSec\": ${WATCH_EVERY_SEC:-300}, \"projects\": {}}' > ~/.config/my-ai-org/bridge.json"
+in_pc 'install -d ~/.config/systemd/user && cat > ~/.config/systemd/user/my-ai-org-github-bridge.service' <<'UNIT'
+[Unit]
+Description=GitHub to Paperclip bridge (one polling pass)
+
+[Service]
+Type=oneshot
+# node comes from the mise shims on PATH (environment.d, see paperclip-setup.sh)
+ExecStart=/usr/bin/env node %h/.local/share/my-ai-org/github-bridge.mjs
+UNIT
+in_pc 'cat > ~/.config/systemd/user/my-ai-org-github-bridge.timer' <<'UNIT'
+[Unit]
+Description=Run the GitHub to Paperclip bridge every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
+UNIT
+in_pc 'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user daemon-reload && systemctl --user enable --now my-ai-org-github-bridge.timer >/dev/null 2>&1 && systemctl --user is-active my-ai-org-github-bridge.timer' \
+  | sed 's/^/    timer: /'
+echo "    logs: incus exec $NAME -- su - $PC_USER -c 'XDG_RUNTIME_DIR=/run/user/\$(id -u) journalctl --user -u my-ai-org-github-bridge -f'"
 
 # ------------------------------------------------------------ key exchange
 # newbox.sh authorizes its caller's key plus ~/.config/pixels/authorized_keys

@@ -78,6 +78,8 @@ chown "$PC_USER:$PC_USER" "$PC_HOME/.config/mise/config.toml"
 step "Installing tools via mise"
 as_pc 'mise trust --yes ~/.config/mise/config.toml' || true
 as_pc 'mise install --yes'
+# "latest" entries only move when asked; re-running the installer is that ask.
+[[ "${PAPERCLIP_UPDATE:-1}" == 1 ]] && as_pc 'mise upgrade --yes >/dev/null' || true
 
 if ! grep -q 'mise activate bash' "$PC_HOME/.bashrc" 2>/dev/null; then
   cat >> "$PC_HOME/.bashrc" <<'EOF'
@@ -144,6 +146,11 @@ chmod 600 "$PC_HOME/.ssh/config"
 step "Paperclip"
 if ! as_pc 'command -v paperclipai' >/dev/null 2>&1; then
   as_pc 'npx --yes paperclipai@latest install --yes'
+elif [[ "${PAPERCLIP_UPDATE:-1}" == 1 ]]; then
+  # Moves to the latest stable release (a no-op when current), backing up the
+  # database first and keeping the previous payload for `paperclipai update
+  # --rollback`. PAPERCLIP_UPDATE=0 pins the installed version.
+  as_pc 'paperclipai update' || echo "    (paperclipai update failed; staying on the installed version)"
 fi
 as_pc 'paperclipai --version'
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start a project: its own container, plus a Product Manager agent in Paperclip working on it.
+# Start a project: its own container, plus its team of agents in Paperclip.
 #
 #   scripts/newproject.sh <name> <org/repo> [<org/repo>...] [options]
 #   scripts/newproject.sh --check          # preflight only; changes nothing
@@ -13,9 +13,11 @@
 #   2. host key     Paperclip learns the box's SSH host key
 #   3. checkouts    the repos, cloned in the Paperclip container -- see below
 #   4. environment  Paperclip SSH environment "<name>" -> px-<name>
-#   5. Product Mgr  "<Name> Product Manager" (Paperclip role "pm"), runs on the box
+#   5. team         Product Manager, Lead Engineer, UI Designer, Coder, QA Lead,
+#                   Security: "<Name> <Role>", all running on the box
 #   6. project      Paperclip project "<name>", Product Manager as lead, one workspace per repo
 #   7. kickoff      first issue for the Product Manager: learn the repo, write the roadmap
+#   8. GitHub watch how often the GitHub bridge polls this project's repos
 #
 # Why two checkouts: Paperclip's SSH driver does not run agents in a directory
 # that already exists on the box. Each run uploads the project workspace from
@@ -46,11 +48,14 @@ Options:
   --prodmgr-adapter claude|codex      Product Manager runtime (default: claude)
   --prodmgr-model MODEL               adapter model (default: the adapter's own default)
   --prodmgr-instructions FILE         AGENTS.md template (default: templates/product-manager.md)
+  --team-adapter claude|codex         runtime for the rest of the team (default: claude)
   --reports-to NAME|ID                Product Manager's manager (default: the company's CEO, if any)
   --budget DOLLARS                    monthly budget for the Product Manager (default: none set)
   --egress agent            passed to newbox.sh
   --no-auth                 passed to newbox.sh
   --no-kickoff              skip the kickoff issue
+  --watch-every DURATION    how often the GitHub bridge polls this project's repos:
+                            30s, 5m, 1h, 1d, or off (default: the company default, 5m)
   --dry-run                 show what exists and what would be created
 EOF
 }
@@ -58,9 +63,9 @@ EOF
 # ----------------------------------------------------------------- arguments
 MODE=run
 NAME=""; REPOS=()
-COMPANY=""; PRODMGR_ADAPTER=claude; PRODMGR_MODEL=""; REPORTS_TO=""; BUDGET=""
+COMPANY=""; TEAM_ADAPTER=claude; PRODMGR_ADAPTER=claude; PRODMGR_MODEL=""; REPORTS_TO=""; BUDGET=""
 PRODMGR_TEMPLATE="$ROOT/templates/product-manager.md"
-NEWBOX_ARGS=(); KICKOFF=1; DRY=0
+NEWBOX_ARGS=(); KICKOFF=1; DRY=0; WATCH_EVERY=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
@@ -68,6 +73,7 @@ while [[ $# -gt 0 ]]; do
     --capacity) MODE=capacity; shift ;;
     --company) COMPANY="${2:?}"; shift 2 ;;
     --prodmgr-adapter) PRODMGR_ADAPTER="${2:?}"; shift 2 ;;
+    --team-adapter) TEAM_ADAPTER="${2:?}"; shift 2 ;;
     --prodmgr-model) PRODMGR_MODEL="${2:?}"; shift 2 ;;
     --prodmgr-instructions) PRODMGR_TEMPLATE="${2:?}"; shift 2 ;;
     --reports-to) REPORTS_TO="${2:?}"; shift 2 ;;
@@ -75,6 +81,7 @@ while [[ $# -gt 0 ]]; do
     --egress) NEWBOX_ARGS+=(--egress "${2:?}"); shift 2 ;;
     --no-auth) NEWBOX_ARGS+=(--no-auth); shift ;;
     --no-kickoff) KICKOFF=0; shift ;;
+    --watch-every) WATCH_EVERY="${2:?}"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     -*) echo "Unknown option: $1"; usage; exit 1 ;;
     *)
@@ -98,19 +105,8 @@ else
   pc_sh() { incus exec "$PC_NAME" --project default -- su - "$PC_USER" -c "$1"; }
 fi
 
-# api METHOD PATH [JSON] -> response body on stdout; dies on HTTP >= 400.
-api() {
-  local method="$1" path="$2" body="${3:-}" out code
-  out=$(mktemp)
-  code=$(curl -sS -o "$out" -w '%{http_code}' -X "$method" "$PAPERCLIP/api$path" \
-    -H 'Content-Type: application/json' ${body:+--data "$body"}) \
-    || { rm -f "$out"; die "cannot reach Paperclip at $PAPERCLIP"; }
-  if [[ "$code" -ge 400 ]]; then
-    echo "    !! $method $path -> HTTP $code: $(head -c 600 "$out")" >&2
-    rm -f "$out"; return 1
-  fi
-  cat "$out"; rm -f "$out"
-}
+# api, secret_id, ensure_agent and friends.
+. "$HERE/lib/paperclip.sh"
 
 to_mib() {  # "20.00GiB" / "512.00MiB" / "UNLIMITED" -> integer MiB (0 = unlimited)
   awk -v v="$1" 'BEGIN {
@@ -172,8 +168,23 @@ preflight
 [[ "$NAME" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "name must be lowercase letters, digits and dashes"
 [[ ${#REPOS[@]} -gt 0 ]] || die "give at least one org/repo"
 case "$PRODMGR_ADAPTER" in claude|codex) ;; *) die "--prodmgr-adapter is claude or codex" ;; esac
+case "$TEAM_ADAPTER" in claude|codex) ;; *) die "--team-adapter is claude or codex" ;; esac
 [[ -f "$PRODMGR_TEMPLATE" ]] || die "no Product Manager template at $PRODMGR_TEMPLATE"
 ADAPTER_TYPE="${PRODMGR_ADAPTER}_local"
+WATCH_SECS=""
+if [[ -n "$WATCH_EVERY" ]]; then
+  case "$WATCH_EVERY" in
+    off|0) WATCH_SECS=0 ;;
+    *[0-9]s) WATCH_SECS=${WATCH_EVERY%s} ;;
+    *[0-9]m) WATCH_SECS=$(( ${WATCH_EVERY%m} * 60 )) ;;
+    *[0-9]h) WATCH_SECS=$(( ${WATCH_EVERY%h} * 3600 )) ;;
+    *[0-9]d) WATCH_SECS=$(( ${WATCH_EVERY%d} * 86400 )) ;;
+    *) die "--watch-every wants 30s, 5m, 1h, 1d or off; got $WATCH_EVERY" ;;
+  esac
+  [[ "$WATCH_SECS" =~ ^[0-9]+$ ]] || die "--watch-every: not a duration: $WATCH_EVERY"
+  # The bridge's timer fires once a minute, so that is the floor.
+  (( WATCH_SECS == 0 || WATCH_SECS >= 60 )) || { info "note: --watch-every below 1m is rounded up to 1m"; WATCH_SECS=60; }
+fi
 HOSTALIAS="px-$NAME"
 AGENT_NAME="${NAME^} Product Manager"
 [[ $DRY -eq 1 ]] && info "dry run: nothing will be changed"
@@ -219,11 +230,16 @@ for repo in "${REPOS[@]}"; do
   fi
   pc_sh "
     set -e
-    if [ -d $dir/.git ]; then echo '    $repo: exists'; exit 0; fi
-    mkdir -p \$(dirname $dir)
-    if gh auth status >/dev/null 2>&1; then gh repo clone $repo $dir -- --quiet
-    else git clone --quiet https://github.com/$repo.git $dir; fi
-    echo '    $repo: cloned'" || die "could not clone $repo in $PC_NAME (private? seed a gh token: seed-agent-auth.sh --incus $PC_NAME:$PC_USER)"
+    # No 'exit' here: under su -, it runs Debian's ~/.bash_logout, whose last
+    # test fails in a container and turns 'exit 0' into status 1.
+    if [ -d $dir/.git ]; then
+      echo '    $repo: exists'
+    else
+      mkdir -p \$(dirname $dir)
+      if gh auth status >/dev/null 2>&1; then gh repo clone $repo $dir -- --quiet
+      else git clone --quiet https://github.com/$repo.git $dir; fi
+      echo '    $repo: cloned'
+    fi" || die "could not clone $repo in $PC_NAME (private? seed a gh token: seed-agent-auth.sh --incus $PC_NAME:$PC_USER)"
 done
 PC_HOME=$(pc_sh 'echo $HOME')
 
@@ -268,10 +284,14 @@ if [[ -n "$ENV_ID" && $DRY -eq 0 ]]; then
     || die "probe failed: $(jq -c '.summary, .details.error' <<<"$probe")"
 fi
 
-# ------------------------------------------------------ 5. Product Manager
-step "5. Agent \"$AGENT_NAME\""
+# --------------------------------------------------------------- 5. the team
+# Six agents per project, all running on the box through the environment. The
+# Product Manager leads the project; the process they follow is the
+# team-workflow skill. ensure_agent (scripts/lib/paperclip.sh) creates each one
+# or brings it into line, upgrading its instructions from templates/ while they
+# are still the ones this repo wrote.
+step "5. Team"
 AGENTS=$(api GET "/companies/$COMPANY_ID/agents")
-AGENT_ID=$(jq -r --arg n "$AGENT_NAME" '.[] | select(.name == $n) | .id' <<<"$AGENTS" | head -1)
 if [[ -n "$REPORTS_TO" ]]; then
   MANAGER_ID=$(jq -r --arg m "$REPORTS_TO" \
     '.[] | select(.id == $m or (.name | ascii_downcase) == ($m | ascii_downcase)) | .id' <<<"$AGENTS" | head -1)
@@ -280,37 +300,47 @@ else
   MANAGER_ID=$(jq -r '[.[] | select(.role == "ceo")][0].id // empty' <<<"$AGENTS")
 fi
 MANAGER_NAME=$(jq -r --arg id "${MANAGER_ID:-none}" '.[] | select(.id == $id) | .name' <<<"$AGENTS")
+[[ -n "$MANAGER_ID" ]] || info "note: no CEO in the company; the Product Manager reports to nobody (use --reports-to)"
 
-if [[ -n "$AGENT_ID" ]]; then
-  info "exists ($AGENT_ID)"
-  cur_env=$(jq -r --arg id "$AGENT_ID" '.[] | select(.id == $id) | .defaultEnvironmentId // empty' <<<"$AGENTS")
-  [[ -z "$ENV_ID" || "$cur_env" == "$ENV_ID" ]] || info "note: its environment is not '$NAME'; left as is"
-elif [[ $DRY -eq 1 ]]; then
-  info "would hire: Product Manager, $ADAPTER_TYPE, reports to ${MANAGER_NAME:-nobody (no CEO; use --reports-to)}"
-else
-  # The instructions become the agent's AGENTS.md. They are rendered here, and
-  # Paperclip stores them on its side and uploads them with every run.
-  repo_list=""
-  for r in "${REPOS[@]}"; do repo_list+="- \`$r\` (https://github.com/$r)"$'\n'; done
-  instructions=$(<"$PRODMGR_TEMPLATE")
-  instructions="${instructions//\{\{PROJECT\}\}/$NAME}"
-  instructions="${instructions//\{\{REPOS\}\}/${repo_list%$'\n'}}"
-  # engine=cli: the adapters default to their ACP engine, which runs only on
-  # sandbox targets and fails on SSH ones with adapter_engine_unavailable.
-  adapter_config=$(jq -n --arg m "$PRODMGR_MODEL" '{engine: "cli"} + (if $m == "" then {} else {model: $m} end)')
-  budget_cents=0; [[ -n "$BUDGET" ]] && budget_cents=$(awk -v d="$BUDGET" 'BEGIN { printf "%d", d * 100 }')
-  # role "pm" is the fixed value Paperclip uses for a product manager.
-  body=$(jq -n --arg n "$AGENT_NAME" --arg t "$ADAPTER_TYPE" --arg env "$ENV_ID" \
-    --arg mgr "$MANAGER_ID" --arg md "$instructions" --argjson ac "$adapter_config" \
-    --argjson b "$budget_cents" --arg p "$NAME" '{
-      name: $n, role: "pm", title: "Product Manager, \($p)",
-      adapterType: $t, adapterConfig: $ac, defaultEnvironmentId: $env,
-      reportsTo: (if $mgr == "" then null else $mgr end),
-      budgetMonthlyCents: $b,
-      instructionsBundle: {entryFile: "AGENTS.md", files: {"AGENTS.md": $md}}}')
-  AGENT_ID=$(api POST "/companies/$COMPANY_ID/agents" "$body" | jq -r .id)
-  info "hired ($AGENT_ID), reports to ${MANAGER_NAME:-nobody -- no CEO yet; set it in the UI or use --reports-to}"
-fi
+PROJECT="$NAME"
+REPOS_MD=""
+for r in "${REPOS[@]}"; do REPOS_MD+="- \`$r\` (https://github.com/$r)"$'\n'; done
+REPOS_MD="${REPOS_MD%$'\n'}"
+BUDGET_CENTS=0; [[ -n "$BUDGET" ]] && BUDGET_CENTS=$(awk -v d="$BUDGET" 'BEGIN { printf "%d", d * 100 }')
+
+# key | display name | Paperclip role | template | manager key
+TEAM=(
+  "prodmgr|Product Manager|pm|$PRODMGR_TEMPLATE|"
+  "lead-engineer|Lead Engineer|engineer|$ROOT/templates/lead-engineer.md|prodmgr"
+  "ui-designer|UI Designer|designer|$ROOT/templates/ui-designer.md|prodmgr"
+  "coder|Coder|engineer|$ROOT/templates/coder.md|lead-engineer"
+  "qa-lead|QA Lead|qa|$ROOT/templates/qa-lead.md|prodmgr"
+  "security|Security|security|$ROOT/templates/security.md|prodmgr"
+)
+declare -A TEAM_ID=()
+for member in "${TEAM[@]}"; do
+  IFS='|' read -r key label prole template mgr_key <<<"$member"
+  aname="${NAME^} $label"
+  if [[ $DRY -eq 1 ]]; then
+    jq -e --arg n "$aname" 'any(.[]; (.name | ascii_downcase) == ($n | ascii_downcase))' <<<"$AGENTS" >/dev/null \
+      && info "$aname: exists" || info "$aname: would hire"
+    continue
+  fi
+  if [[ "$key" == prodmgr ]]; then
+    A_ADAPTER="${PRODMGR_ADAPTER}_local"; A_MANAGER="$MANAGER_ID"; model="$PRODMGR_MODEL"
+  else
+    A_ADAPTER="${TEAM_ADAPTER}_local"; A_MANAGER="${TEAM_ID[$mgr_key]:-}"; model=""
+  fi
+  A_COMPANY="$COMPANY_ID" A_NAME="$aname" A_ROLE_KEY="$key" A_ROLE="$prole" \
+  A_TITLE="$label, $NAME" A_TEMPLATE="$template" A_ENV="$ENV_ID" A_PROJECT="$NAME" \
+  A_BUDGET="$([[ "$key" == prodmgr ]] && echo "$BUDGET_CENTS" || echo 0)" \
+  A_EXTRA="$(jq -n --arg m "$model" 'if $m == "" then {} else {model: $m} end')" \
+  A_ADAPTER="$A_ADAPTER" A_MANAGER="$A_MANAGER"
+  export A_COMPANY A_NAME A_ROLE_KEY A_ROLE A_TITLE A_TEMPLATE A_ENV A_PROJECT A_BUDGET A_EXTRA A_ADAPTER A_MANAGER
+  TEAM_ID[$key]=$(ensure_agent)
+done
+AGENT_ID="${TEAM_ID[prodmgr]:-}"
+[[ $DRY -eq 1 ]] || info "Product Manager reports to ${MANAGER_NAME:-nobody}"
 
 # ---------------------------------------------------------------- 6. project
 step "6. Project $NAME"
@@ -359,7 +389,23 @@ Do not start implementation work in this issue."
     projectId: $p, assigneeAgentId: $a, status: "todo", priority: "high",
     idempotencyKey: "newproject:\($n):kickoff"}')
   issue=$(api POST "/companies/$COMPANY_ID/issues" "$body")
-  info "$(jq -r '.identifier // .id' <<<"$issue") assigned to $AGENT_NAME"
+  # An idempotent replay returns the existing issue unchanged.
+  info "$(jq -r '.identifier // .id' <<<"$issue") (assigned to $AGENT_NAME; an existing kickoff is left as it is)"
+fi
+
+# --------------------------------------------------------- 8. GitHub watch
+# The bridge in the Paperclip container (paperclip-up.sh) polls every
+# project's repos; this sets how often for this one.
+step "8. GitHub watch"
+BRIDGE_CFG='~/.config/my-ai-org/bridge.json'
+if ! pc_sh "[ -f $BRIDGE_CFG ]" 2>/dev/null; then
+  info "the GitHub bridge isn't installed yet (paperclip-up.sh installs it)"
+elif [[ -n "$WATCH_SECS" && $DRY -eq 0 ]]; then
+  pc_sh "jq --arg p '$NAME' --argjson s $WATCH_SECS '.projects[\$p] = {intervalSec: \$s}' $BRIDGE_CFG > $BRIDGE_CFG.tmp && mv $BRIDGE_CFG.tmp $BRIDGE_CFG"
+  [[ "$WATCH_SECS" -eq 0 ]] && info "off for $NAME" || info "every ${WATCH_SECS}s"
+else
+  cur=$(pc_sh "jq -r --arg p '$NAME' '(.projects[\$p].intervalSec // .defaultIntervalSec // 300)' $BRIDGE_CFG")
+  [[ "$cur" -eq 0 ]] && info "off for $NAME" || info "every ${cur}s (change with --watch-every)"
 fi
 
 step "Ready"

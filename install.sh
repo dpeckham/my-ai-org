@@ -14,10 +14,19 @@
 #                  bridge, .incus DNS, pixels
 #   3. base image  the template every project box is cloned from
 #   4. paperclip   paperclip-up.sh: the control-plane container
-#   5. org         paperclip-org.sh: root company, Chief of Staff, DevOps
-#   6. projects    provision.sh FILE (default local/projects.manifest). With no
-#                  manifest yet, writes one listing every repo you can access,
-#                  all commented out, and stops so you can choose.
+#   5. org         paperclip-org.sh: root company, Chief of Staff, CTO, DevOps
+#   6. GitHub bot  github-apps.sh: the App the reviewing roles act as
+#   7. projects    provision.sh FILE (default local/projects.manifest): a box
+#                  and a six-agent team per project. With no manifest yet,
+#                  writes one listing every repo you can access, all commented
+#                  out, and stops so you can choose.
+#   8. skills      skills-sync.sh: skills/sources.manifest into Paperclip
+#   9. boxes       refresh tools this repo ships onto existing boxes
+#
+# Upgrading is `git pull && ./install.sh`: every phase reconciles rather than
+# skipping what exists (the template rebuilds when base-setup.sh changes,
+# Paperclip updates itself, agents' instructions upgrade unless you edited
+# them).
 #
 # Interactive by design: it asks for sudo, and for browser sign-ins the first
 # time. Run it in a real terminal.
@@ -33,7 +42,7 @@ while [[ $# -gt 0 ]]; do
     --company) COMPANY="${2:?}"; shift 2 ;;
     --projects) PROJECTS="${2:?}"; shift 2 ;;
     --no-projects) DO_PROJECTS=0; shift ;;
-    -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
     *) echo "Unknown option: $1 (see --help)"; exit 1 ;;
   esac
 done
@@ -45,6 +54,12 @@ die()   { echo "!! $*" >&2; exit 1; }
 [[ -t 0 ]] || die "run this in an interactive terminal (it asks for sudo and sign-ins)"
 [[ $EUID -ne 0 ]] || die "run as your normal user, not root; it uses sudo where needed"
 export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
+
+# Upgrading is `git pull && ./install.sh`; say so if this checkout is behind.
+if git -C "$HERE" fetch -q 2>/dev/null; then
+  behind=$(git -C "$HERE" rev-list --count HEAD..@{u} 2>/dev/null || echo 0)
+  [[ "$behind" -gt 0 ]] && echo "NOTE: this checkout is $behind commit(s) behind its upstream; 'git pull' first for the latest."
+fi
 
 # ============================================================== 0. prereqs
 phase "0. Prerequisites"
@@ -139,19 +154,32 @@ phase "2. Host"
 "$S/host-setup.sh"
 
 # =========================================================== 3. base image
+# Rebuilt whenever base-setup.sh has changed since the template was built (its
+# checksum is kept inside the template), so a `git pull` that changes the
+# toolchain reaches every box created afterwards. Existing boxes are clones
+# and keep the toolchain they were made with.
 phase "3. Base image"
-if pixels checkpoint list base 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx ready; then
-  info "base:ready exists (see README 'Updating the image' to refresh it)"
+want_sha=$(sha256sum "$S/base-setup.sh" | cut -c1-64)
+have_ready=0
+pixels checkpoint list base 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx ready && have_ready=1
+pixels list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx base || pixels create base
+pixels start base >/dev/null 2>&1 || true
+have_sha=$(incus exec px-base --project agents -- cat /etc/my-ai-org/base-setup.sha256 2>/dev/null || true)
+if [[ $have_ready -eq 1 && "$have_sha" == "$want_sha" ]]; then
+  info "base:ready is current"
 else
-  pixels list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx base || pixels create base
-  pixels start base >/dev/null 2>&1 || true
+  [[ $have_ready -eq 1 ]] && info "base-setup.sh changed; rebuilding the template" || info "building the template"
   incus file push "$S/base-setup.sh" px-base/root/base-setup.sh --project agents
   incus exec px-base --project agents -- bash /root/base-setup.sh
-  incus exec px-base --project agents -- bash -c 'rm -f /root/base-setup.sh /etc/ssh/ssh_host_*'
+  incus exec px-base --project agents -- bash -c "rm -f /root/base-setup.sh /etc/ssh/ssh_host_* && install -d /etc/my-ai-org && echo $want_sha > /etc/my-ai-org/base-setup.sha256"
+  [[ $have_ready -eq 1 ]] && pixels checkpoint delete base ready
   pixels checkpoint create base --label ready
+  [[ $have_ready -eq 1 ]] && info "new boxes get the new toolchain; existing ones keep theirs (rebuild a box to upgrade it)"
 fi
 
 # ============================================================ 4. paperclip
+# paperclip-setup.sh also upgrades Paperclip and the container's tools on
+# every run (PAPERCLIP_UPDATE=0 to skip).
 phase "4. Paperclip"
 "$S/paperclip-up.sh"
 
@@ -159,8 +187,20 @@ phase "4. Paperclip"
 phase "5. Organisation"
 "$S/paperclip-org.sh" ${COMPANY:+--company "$COMPANY"}
 
-# ============================================================= 6. projects
-phase "6. Projects"
+# ============================================================ 6. GitHub bot
+# One GitHub App for every reviewing role. Created and installed once (two
+# browser clicks); after that this only checks it and refreshes Paperclip's
+# copy of its credentials. paperclip-org.sh runs again so the company-level
+# agents pick the credentials up on the first install.
+phase "6. GitHub bot"
+"$S/github-apps.sh"
+"$S/paperclip-org.sh" ${COMPANY:+--company "$COMPANY"} >/dev/null
+
+# ============================================================= 7. projects
+# newproject.sh is idempotent per project: it adds missing team members and
+# upgrades existing agents' instructions from templates/, so re-running this
+# after a pull brings every project's team up to date.
+phase "7. Projects"
 if [[ $DO_PROJECTS -eq 0 ]]; then
   info "skipped (--no-projects)"
 elif [[ -f "$PROJECTS" ]]; then
@@ -173,7 +213,19 @@ else
   echo "    (or just scripts/provision.sh $PROJECTS)."
 fi
 
+# =============================================================== 8. skills
+phase "8. Skills"
+"$S/skills-sync.sh"
+
+# ========================================================= 9. box refresh
+# Tools shipped from this repo onto boxes that already exist.
+phase "9. Existing boxes"
+for b in $(pixels list 2>/dev/null | awk 'NR>1 && $1 != "base" && $2 == "RUNNING" {print $1}'); do
+  "$S/seed-agent-auth.sh" --only gh-bot "px-$b" >/dev/null 2>&1 && info "px-$b: gh-bot refreshed" \
+    || info "px-$b: unreachable; skipped"
+done
+
 phase "Done"
 echo "  Paperclip:  http://localhost:3100"
 echo "  Boxes:      pixels list   /   ssh px-<name>"
-echo "  Re-run ./install.sh any time; it only does what is missing."
+echo "  Upgrade:    git pull && ./install.sh   (only changes what is out of date)"
