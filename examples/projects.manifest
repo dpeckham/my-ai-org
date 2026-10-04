@@ -11,8 +11,8 @@
 # project line come after them, so they win. Blank lines and # comments are
 # ignored. Quoting works as in a shell (the line is parsed by bash).
 
-defaults  --pm-adapter claude
+defaults  --prodmgr-adapter claude
 
 widget    example-org/widget-api example-org/widget-web   # one project, two repos
 blog      example-user/blog       --no-kickoff
-firmware  example-org/firmware    --pm-adapter codex --egress agent
+firmware  example-org/firmware    --prodmgr-adapter codex --egress agent

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start a project: its own container, plus a PM agent in Paperclip working on it.
+# Start a project: its own container, plus a Product Manager agent in Paperclip working on it.
 #
 #   scripts/newproject.sh <name> <org/repo> [<org/repo>...] [options]
 #   scripts/newproject.sh --check          # preflight only; changes nothing
@@ -13,9 +13,9 @@
 #   2. host key     Paperclip learns the box's SSH host key
 #   3. checkouts    the repos, cloned in the Paperclip container -- see below
 #   4. environment  Paperclip SSH environment "<name>" -> px-<name>
-#   5. PM agent     "<Name> PM", role pm, runs on the box via that environment
-#   6. project      Paperclip project "<name>", PM as lead, one workspace per repo
-#   7. kickoff      first issue for the PM: learn the repo, write the roadmap
+#   5. Product Mgr  "<Name> Product Manager" (Paperclip role "pm"), runs on the box
+#   6. project      Paperclip project "<name>", Product Manager as lead, one workspace per repo
+#   7. kickoff      first issue for the Product Manager: learn the repo, write the roadmap
 #
 # Why two checkouts: Paperclip's SSH driver does not run agents in a directory
 # that already exists on the box. Each run uploads the project workspace from
@@ -43,11 +43,11 @@ Usage: scripts/newproject.sh <name> <org/repo> [<org/repo>...] [options]
 
 Options:
   --company NAME|ID         Paperclip company (default: the only one)
-  --pm-adapter claude|codex agent runtime for the PM (default: claude)
-  --pm-model MODEL          adapter model (default: the adapter's own default)
-  --pm-instructions FILE    PM AGENTS.md template (default: templates/pm-agent.md)
-  --reports-to NAME|ID      PM's manager (default: the company's CEO, if any)
-  --budget DOLLARS          monthly budget for the PM (default: none set)
+  --prodmgr-adapter claude|codex      Product Manager runtime (default: claude)
+  --prodmgr-model MODEL               adapter model (default: the adapter's own default)
+  --prodmgr-instructions FILE         AGENTS.md template (default: templates/product-manager.md)
+  --reports-to NAME|ID                Product Manager's manager (default: the company's CEO, if any)
+  --budget DOLLARS                    monthly budget for the Product Manager (default: none set)
   --egress agent            passed to newbox.sh
   --no-auth                 passed to newbox.sh
   --no-kickoff              skip the kickoff issue
@@ -58,8 +58,8 @@ EOF
 # ----------------------------------------------------------------- arguments
 MODE=run
 NAME=""; REPOS=()
-COMPANY=""; PM_ADAPTER=claude; PM_MODEL=""; REPORTS_TO=""; BUDGET=""
-PM_TEMPLATE="$ROOT/templates/pm-agent.md"
+COMPANY=""; PRODMGR_ADAPTER=claude; PRODMGR_MODEL=""; REPORTS_TO=""; BUDGET=""
+PRODMGR_TEMPLATE="$ROOT/templates/product-manager.md"
 NEWBOX_ARGS=(); KICKOFF=1; DRY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -67,9 +67,9 @@ while [[ $# -gt 0 ]]; do
     --check) MODE=check; shift ;;
     --capacity) MODE=capacity; shift ;;
     --company) COMPANY="${2:?}"; shift 2 ;;
-    --pm-adapter) PM_ADAPTER="${2:?}"; shift 2 ;;
-    --pm-model) PM_MODEL="${2:?}"; shift 2 ;;
-    --pm-instructions) PM_TEMPLATE="${2:?}"; shift 2 ;;
+    --prodmgr-adapter) PRODMGR_ADAPTER="${2:?}"; shift 2 ;;
+    --prodmgr-model) PRODMGR_MODEL="${2:?}"; shift 2 ;;
+    --prodmgr-instructions) PRODMGR_TEMPLATE="${2:?}"; shift 2 ;;
     --reports-to) REPORTS_TO="${2:?}"; shift 2 ;;
     --budget) BUDGET="${2:?}"; shift 2 ;;
     --egress) NEWBOX_ARGS+=(--egress "${2:?}"); shift 2 ;;
@@ -171,11 +171,11 @@ preflight
 [[ -n "$NAME" ]] || { usage; exit 1; }
 [[ "$NAME" =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "name must be lowercase letters, digits and dashes"
 [[ ${#REPOS[@]} -gt 0 ]] || die "give at least one org/repo"
-case "$PM_ADAPTER" in claude|codex) ;; *) die "--pm-adapter is claude or codex" ;; esac
-[[ -f "$PM_TEMPLATE" ]] || die "no PM template at $PM_TEMPLATE"
-ADAPTER_TYPE="${PM_ADAPTER}_local"
+case "$PRODMGR_ADAPTER" in claude|codex) ;; *) die "--prodmgr-adapter is claude or codex" ;; esac
+[[ -f "$PRODMGR_TEMPLATE" ]] || die "no Product Manager template at $PRODMGR_TEMPLATE"
+ADAPTER_TYPE="${PRODMGR_ADAPTER}_local"
 HOSTALIAS="px-$NAME"
-AGENT_NAME="${NAME^} PM"
+AGENT_NAME="${NAME^} Product Manager"
 [[ $DRY -eq 1 ]] && info "dry run: nothing will be changed"
 
 # ------------------------------------------------------------------- 1. box
@@ -268,7 +268,7 @@ if [[ -n "$ENV_ID" && $DRY -eq 0 ]]; then
     || die "probe failed: $(jq -c '.summary, .details.error' <<<"$probe")"
 fi
 
-# --------------------------------------------------------------- 5. PM agent
+# ------------------------------------------------------ 5. Product Manager
 step "5. Agent \"$AGENT_NAME\""
 AGENTS=$(api GET "/companies/$COMPANY_ID/agents")
 AGENT_ID=$(jq -r --arg n "$AGENT_NAME" '.[] | select(.name == $n) | .id' <<<"$AGENTS" | head -1)
@@ -286,23 +286,24 @@ if [[ -n "$AGENT_ID" ]]; then
   cur_env=$(jq -r --arg id "$AGENT_ID" '.[] | select(.id == $id) | .defaultEnvironmentId // empty' <<<"$AGENTS")
   [[ -z "$ENV_ID" || "$cur_env" == "$ENV_ID" ]] || info "note: its environment is not '$NAME'; left as is"
 elif [[ $DRY -eq 1 ]]; then
-  info "would hire: role pm, $ADAPTER_TYPE, reports to ${MANAGER_NAME:-nobody (no CEO; use --reports-to)}"
+  info "would hire: Product Manager, $ADAPTER_TYPE, reports to ${MANAGER_NAME:-nobody (no CEO; use --reports-to)}"
 else
   # The instructions become the agent's AGENTS.md. They are rendered here, and
   # Paperclip stores them on its side and uploads them with every run.
   repo_list=""
   for r in "${REPOS[@]}"; do repo_list+="- \`$r\` (https://github.com/$r)"$'\n'; done
-  instructions=$(<"$PM_TEMPLATE")
+  instructions=$(<"$PRODMGR_TEMPLATE")
   instructions="${instructions//\{\{PROJECT\}\}/$NAME}"
   instructions="${instructions//\{\{REPOS\}\}/${repo_list%$'\n'}}"
   # engine=cli: the adapters default to their ACP engine, which runs only on
   # sandbox targets and fails on SSH ones with adapter_engine_unavailable.
-  adapter_config=$(jq -n --arg m "$PM_MODEL" '{engine: "cli"} + (if $m == "" then {} else {model: $m} end)')
+  adapter_config=$(jq -n --arg m "$PRODMGR_MODEL" '{engine: "cli"} + (if $m == "" then {} else {model: $m} end)')
   budget_cents=0; [[ -n "$BUDGET" ]] && budget_cents=$(awk -v d="$BUDGET" 'BEGIN { printf "%d", d * 100 }')
+  # role "pm" is the fixed value Paperclip uses for a product manager.
   body=$(jq -n --arg n "$AGENT_NAME" --arg t "$ADAPTER_TYPE" --arg env "$ENV_ID" \
     --arg mgr "$MANAGER_ID" --arg md "$instructions" --argjson ac "$adapter_config" \
     --argjson b "$budget_cents" --arg p "$NAME" '{
-      name: $n, role: "pm", title: "Project manager, \($p)",
+      name: $n, role: "pm", title: "Product Manager, \($p)",
       adapterType: $t, adapterConfig: $ac, defaultEnvironmentId: $env,
       reportsTo: (if $mgr == "" then null else $mgr end),
       budgetMonthlyCents: $b,
@@ -339,14 +340,14 @@ fi
 
 # ---------------------------------------------------------------- 7. kickoff
 # idempotencyKey makes a re-run return the same issue rather than a second one.
-# Assigning it with status todo wakes the PM immediately.
+# Assigning it with status todo wakes the Product Manager immediately.
 step "7. Kickoff issue"
 if [[ $KICKOFF -eq 0 ]]; then
   info "skipped (--no-kickoff)"
 elif [[ $DRY -eq 1 ]]; then
   info "would assign \"Kickoff: learn $NAME and write its roadmap\" to $AGENT_NAME"
 else
-  desc="You are the new PM for **$NAME**. Before planning anything:
+  desc="You are the new Product Manager for **$NAME**. Before planning anything:
 
 1. Read the repos (${REPOS[*]}): README, CLAUDE.md / AGENTS.md, docs, recent history, open issues and PRs.
 2. Write \`docs/ROADMAP.md\` and \`docs/STATE.md\` as described in your instructions (or update the repo's existing equivalents).
@@ -364,5 +365,5 @@ fi
 step "Ready"
 echo "  UI:      $PAPERCLIP  (project $NAME, agent \"$AGENT_NAME\")"
 echo "  box:     ssh $HOSTALIAS"
-[[ "$PM_ADAPTER" == codex ]] && echo "  note:    codex runs upload the Paperclip container's codex login; it must have one"
+[[ "$PRODMGR_ADAPTER" == codex ]] && echo "  note:    codex runs upload the Paperclip container's codex login; it must have one"
 true

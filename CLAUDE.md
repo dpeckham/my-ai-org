@@ -2,7 +2,7 @@
 
 This repo installs a complete AI-agent organisation for operators with more
 projects than they can track: Paperclip as the control plane, one Incus
-container per project, and agents (Chief of Staff, DevOps, a PM per project,
+container per project, and agents (Chief of Staff, DevOps, a Product Manager per project,
 and other roles as needed) working in the background and surfacing what needs
 a human. `./install.sh` builds it all from a bare Linux machine, for its owner
 and for anyone else. The README is the manual; keep it true.
@@ -36,7 +36,7 @@ repo's checkout. `pixels` and `incus` talk to the host's Incus daemon with a
 certificate restricted to the `agents` project. You cannot see or change
 anything outside it, and you should not try to.
 
-Starting a project (box, Paperclip SSH environment, PM agent, project, and
+Starting a project (box, Paperclip SSH environment, Product Manager agent, project, and
 kickoff issue in one go):
 
 ```
@@ -48,7 +48,7 @@ pixels list
 - Every step is skipped when its object already exists, so re-running after
   a failure is safe. It never deletes anything, and neither should you without
   being asked: `pixels destroy` is for boxes you created yourself.
-- The kickoff issue starts the new PM working at once. Pass `--no-kickoff`
+- The kickoff issue starts the new Product Manager working at once. Pass `--no-kickoff`
   unless the operator asked for the project to get going.
 - `newbox.sh` alone makes a box without the Paperclip side; use it for boxes
   that are not projects.

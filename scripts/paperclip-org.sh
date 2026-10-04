@@ -7,7 +7,7 @@
 #   company          the single root company. Created if there is none (asks
 #                    for a name, defaulting to "<git user.name>'s company");
 #                    adopted if there is exactly one.
-#   Chief of Staff   role ceo, so PMs report to it by default; claude.
+#   Chief of Staff   role ceo, so Product Managers report to it by default; claude.
 #   DevOps           role devops, reports to the Chief of Staff; claude, run
 #                    locally in the Paperclip container from its checkout of
 #                    this repo, where pixels/newproject.sh are set up for it.

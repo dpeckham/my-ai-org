@@ -16,7 +16,7 @@ every project moving, and puts the things that need you in front of you:
   description, a manager and a budget.
 
 In practice you can run a company from inside here. You set direction as the
-board, a Chief of Staff turns it into work, a PM leads each project, and
+board, a Chief of Staff turns it into work, a Product Manager leads each project, and
 specialists join where needed.
 
 The repo holds no secrets and nothing project-specific. Credentials are
@@ -53,7 +53,7 @@ cd <this-repo>
 | File | Why you'd touch it |
 |------|--------------------|
 | `local/projects.manifest` | **Which repos become projects.** Skip it on the first run, and the installer writes one listing every repo you can access, all commented out. Or start from the example: `mkdir -p local && cp examples/projects.manifest local/projects.manifest`. Never committed (`local/` is gitignored). |
-| `templates/*.md` | The instructions every Chief of Staff, DevOps and PM agent starts with. Edit before installing to change them for new agents; existing agents are edited in the Paperclip UI. |
+| `templates/*.md` | The instructions every Chief of Staff, DevOps and Product Manager agent starts with. Edit before installing to change them for new agents; existing agents are edited in the Paperclip UI. |
 | `scripts/pixels-config.toml` | Default size of a project box (4 CPU / 4GiB) and the egress allowlist. |
 
 Sizing is set by environment variables instead of a file. The default cap for
@@ -91,7 +91,7 @@ phases and skips any that are already done:
 | 3. base image | the template every project box is cloned from, about 3 minutes the first time |
 | 4. paperclip | `scripts/paperclip-up.sh`: the Paperclip container, its service, credentials |
 | 5. org | `scripts/paperclip-org.sh`: your company, a Chief of Staff and a DevOps agent |
-| 6. projects | `scripts/provision.sh local/projects.manifest`, one box and one PM per project |
+| 6. projects | `scripts/provision.sh local/projects.manifest`, one box and one Product Manager per project |
 
 **The first run stops after phase 6 writes your project list.** Open
 `local/projects.manifest`, uncomment the repos you want (several repos on
@@ -102,14 +102,14 @@ $EDITOR local/projects.manifest
 ./install.sh               # or just: scripts/provision.sh local/projects.manifest
 ```
 
-Each new project's PM starts right away on a kickoff issue: it reads the repo
+Each new project's Product Manager starts right away on a kickoff issue: it reads the repo
 and opens a pull request with a roadmap. Add `--no-kickoff` to that project's
 line to hold it back.
 
 ### 6. After installing
 
 - **Paperclip:** <http://localhost:3100>. Your Chief of Staff, DevOps agent and
-  project PMs are in the org chart.
+  project Product Managers are in the org chart.
 - **A project box:** `ssh px-<name>`, or `pixels console <name>`.
 - **More projects later:** add lines to the manifest and re-run, or
   `scripts/newproject.sh <name> <org/repo>`. Or ask the DevOps agent in
@@ -162,8 +162,9 @@ the board: you set direction and approve anything irreversible.
   reports up.
 - **DevOps:** provisions and maintains project boxes, using the same scripts
   you would.
-- **A PM per project:** owns that project's roadmap and state, and breaks work
-  into issues.
+- **A Product Manager per project:** decides what the project builds and why.
+  You brainstorm with it, and it captures features as GitHub issues and keeps
+  the roadmap and state current.
 - **Specialists as needed:** developer, QA, marketing, CFO and so on, hired
   into the org chart with their own instructions and budgets.
 
@@ -176,7 +177,7 @@ company.
 
 1. **Starting a project.** You, or DevOps, run `scripts/newproject.sh <name>
    <org/repo>`. It clones a box from the template, checks the repo out, and
-   creates the Paperclip side: an SSH environment pointing at the box, a PM,
+   creates the Paperclip side: an SSH environment pointing at the box, a Product Manager,
    the project, and a kickoff issue.
 2. **An agent run.** When an agent is woken (an issue assigned, a comment, a
    schedule), Paperclip copies the project's workspace into a fresh directory
@@ -207,7 +208,7 @@ The sections after **Repository layout** cover each piece in depth.
 README.md           this manual
 install.sh          the one command
 CLAUDE.md           rules for agents working in this repo (including the DevOps agent)
-templates/          instructions for the Chief of Staff, DevOps and PM agents
+templates/          instructions for the Chief of Staff, DevOps and Product Manager agents
 examples/           manifest format, with placeholder names
 local/              your project list and other machine-local files (gitignored)
 scripts/            everything install.sh runs, usable one at a time
@@ -220,7 +221,7 @@ scripts/            everything install.sh runs, usable one at a time
 | `paperclip-up.sh` | Incus host | builds or updates the Paperclip container end to end |
 | `paperclip-setup.sh` | Paperclip container (root) | node, Paperclip and its service, pixels, incus client, SSH key |
 | `paperclip-org.sh` | Incus host | the root company, Chief of Staff and DevOps agents |
-| `newproject.sh` | host or Paperclip | one project: box, SSH environment, PM agent, Paperclip project, kickoff issue |
+| `newproject.sh` | host or Paperclip | one project: box, SSH environment, Product Manager agent, Paperclip project, kickoff issue |
 | `provision.sh` | host or Paperclip | `newproject.sh` for every line of a manifest, with a preflight and summary |
 | `list-repos.sh` | host | writes `local/projects.manifest` from every repo the `gh` login can see |
 | `newbox.sh` | host or Paperclip | a bare box: clone the base, authorize keys, seed creds, check out repos |
@@ -383,7 +384,7 @@ since the SSH driver installs nothing; the base image has both.
 
 One Paperclip **company** stands for the operator, and every project lives
 inside it as a Paperclip **project**: its own box, its own SSH environment,
-and a PM agent as lead. Paperclip companies are strict silos. Cross-company
+and a Product Manager agent as lead. Paperclip companies are strict silos. Cross-company
 API calls return 403, and there's no parent/holding relationship. Inside one
 company, though, projects can hand work to each other through ordinary issue
 assignment and share roles like a CEO or DevOps agent. If a project later
@@ -397,7 +398,7 @@ scripts/newproject.sh <name> <org/repo> [<org/repo>...] [options]
 scripts/provision.sh  <manifest> [--dry-run]       # many at once
 ```
 
-`newproject.sh` takes a project from repo to working PM in seven steps. Each
+`newproject.sh` takes a project from repo to a working Product Manager in seven steps. Each
 step finds its object by name and skips it if it already exists, so a failed
 run can simply be repeated:
 
@@ -407,18 +408,18 @@ run can simply be repeated:
 | 2. host key | records the box's host key for the Paperclip user (strict checking needs it) |
 | 3. checkouts | the repos again, in the Paperclip container (see above for why) |
 | 4. environment | SSH environment `<name>` → `px-<name>`, then probes it |
-| 5. PM agent | `<Name> PM`: role `pm`, `claude_local` or `codex_local`, on that environment, reporting to the CEO if there is one |
-| 6. project | project `<name>`, PM as lead, one workspace per repo (the first is primary) |
-| 7. kickoff | an issue for the PM: read the repos, write `docs/ROADMAP.md` + `docs/STATE.md`, open a PR. It is assigned as `todo`, so **the PM starts working immediately** |
+| 5. Product Manager | `<Name> Product Manager` (Paperclip's role value `pm`), `claude_local` or `codex_local`, on that environment, reporting to the CEO if there is one |
+| 6. project | project `<name>`, Product Manager as lead, one workspace per repo (the first is primary) |
+| 7. kickoff | an issue for the Product Manager: read the repos, write `docs/ROADMAP.md` + `docs/STATE.md`, open a PR. It is assigned as `todo`, so **the Product Manager starts working immediately** |
 
-Options: `--pm-adapter claude|codex`, `--pm-model`, `--reports-to <agent>`,
-`--budget <dollars>`, `--pm-instructions <file>`, `--no-kickoff`,
+Options: `--prodmgr-adapter claude|codex`, `--prodmgr-model`, `--reports-to <agent>`,
+`--budget <dollars>`, `--prodmgr-instructions <file>`, `--no-kickoff`,
 `--egress agent` and `--no-auth` (both passed to `newbox.sh`), `--company`,
 and `--dry-run`. `scripts/newproject.sh --check` runs only the preflight.
 
-The PM's instructions come from `templates/pm-agent.md`, rendered with the
+The Product Manager's instructions come from `templates/product-manager.md`, rendered with the
 project name and repo list, and are stored by Paperclip as the agent's
-`AGENTS.md`. Edit the template to change every future PM. Existing PMs are
+`AGENTS.md`. Edit the template to change every future Product Manager. Existing ones are
 edited in the UI.
 
 `provision.sh` takes a manifest with one project per line. Each line is a
@@ -452,12 +453,12 @@ Before the first run:
 - SSH environments sit behind an experimental flag. `paperclip-setup.sh` turns
   it on at install. `newproject.sh` checks for it and stops if it has been
   turned off since.
-- The PM's adapter needs credentials. `claude_local` uses the box's own login,
+- The Product Manager's adapter needs credentials. `claude_local` uses the box's own login,
   which `newbox.sh` seeds. `codex_local` uploads the **Paperclip container's**
   codex login, so the container needs one. For private repos, the Paperclip
   container needs a `gh` token to clone them. `seed-agent-auth.sh --incus
   paperclip:paperclip` covers all of these.
-- With no CEO in the company, PMs report to nobody until you set
+- With no CEO in the company, Product Managers report to nobody until you set
   `--reports-to` or fix it in the UI.
 
 ### Standing agents
@@ -468,7 +469,7 @@ Before the first run:
 |-------|------|------|-----|
 | Chief of Staff | `ceo` | Paperclip container | triage, cross-project priorities, oversight, reporting to the operator |
 | DevOps | `devops`, reports to Chief of Staff | Paperclip container, from its checkout of this repo | starts projects (`newproject.sh`), maintains boxes, keeps this repo current |
-| `<Name> PM`, one per project | `pm`, reports to Chief of Staff | the project's box | roadmap, state and flow for that project |
+| `<Name> Product Manager`, one per project | `pm` (Paperclip's role value), reports to Chief of Staff | the project's box | what the project builds and why: brainstorming with you, feature issues, roadmap, state |
 
 All of them run claude with `engine: cli`, on the long-lived token. Their
 instructions come from `templates/` and are written only when the agent is
@@ -503,7 +504,7 @@ then has:
 
 `CLAUDE.md` in this repo is written for it, with the provisioning steps and
 the rules about what goes into the repo. Its normal tool is `newproject.sh`,
-which does the box, the SSH environment and the PM in one go. `newbox.sh` on
+which does the box, the SSH environment and the Product Manager in one go. `newbox.sh` on
 its own is for boxes that aren't projects.
 
 ## Dev base image

@@ -46,11 +46,11 @@ dupes=$(cut -f1 <<<"$repos" | awk -F/ '{print tolower($2)}' | sort | uniq -d)
   echo "#"
   echo "# Uncomment a line to provision that repo as a project:"
   echo "#   scripts/provision.sh $(realpath --relative-to="$ROOT" "$OUT" 2>/dev/null || echo "$OUT") [--dry-run]"
-  echo "# Put several repos on one line to make them one project (one box, one PM)."
+  echo "# Put several repos on one line to make them one project (one box, one Product Manager)."
   echo "# Lines already uncommented are projects whose box exists."
   echo "# Format and options: examples/projects.manifest, scripts/newproject.sh --help."
   echo
-  echo "defaults  --pm-adapter claude"
+  echo "defaults  --prodmgr-adapter claude"
   owner=""
   while IFS=$'\t' read -r full private archived fork pushed; do
     o="${full%%/*}"; r="${full#*/}"
