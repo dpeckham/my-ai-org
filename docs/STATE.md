@@ -4,6 +4,75 @@ Current status. Newest entry first. Keep it short: what is done, what is in
 flight, what is blocked, what is next. Goals and milestones live in
 [ROADMAP.md](ROADMAP.md).
 
+## 2026-10-05
+
+### Done
+
+- **The CTO's first cross-project review landed**, and its largest finding is
+  triaged and specified: the whole team shares one git working copy that is
+  never reset ([#17](https://github.com/dpeckham/my-ai-org/issues/17)). Split
+  into a preflight guard ([#17](https://github.com/dpeckham/my-ai-org/issues/17),
+  part 1, in this repo), per-issue worktrees via the project's
+  `executionWorkspacePolicy` ([#19](https://github.com/dpeckham/my-ai-org/issues/19),
+  part 2), and a hand runbook for the two checkouts already damaged
+  ([#20](https://github.com/dpeckham/my-ai-org/issues/20), DevOps or the
+  operator — a project agent cannot reach them). Recorded in
+  [decisions/0006](decisions/0006-the-run-workspace-is-disposable.md).
+
+### Decided
+
+By the Product Manager, 2026-10-05, on the two questions the review left open
+([0006](decisions/0006-the-run-workspace-is-disposable.md)):
+
+- **Both parts, in sequence, not one of them.** The guard first because it
+  lives in this repo and needs no untested platform behaviour, and because it
+  stays useful afterwards as the check that a worktree really is clean at
+  `origin/<default>`. The worktree change second, because it is the one that
+  removes the shared mutable directory.
+- **Clearing the two damaged checkouts belongs to DevOps or the operator**, as
+  a runbook rather than pipeline work. Verified 2026-10-05 that
+  `/home/paperclip/code` does not exist from inside a project run, so no role
+  agent on a project box can reach `$PC_HOME/code/<org>/<repo>`.
+
+Settled by observation rather than by asking:
+
+- **The staged run copy arrives with no remote-tracking refs**, and `main` with
+  no upstream. So `git switch -c <branch> origin/<default-branch>` — the rule
+  `skills/pull-requests/SKILL.md:63` already gives — fails at the start of a
+  run, and `git status -sb` shows a bare `## main` with nothing to warn an agent
+  that its base is nine commits of divergence away from `origin`. The rule was
+  unrunnable, not ignored. A plain `git fetch origin` repairs it and runs have
+  network access, which is why the fix needs no platform change.
+- **`executionWorkspacePolicy: null` on all four projects** on this Paperclip,
+  not just this one. Verified against `GET /api/companies/<id>/projects`.
+  `PATCH /api/projects/{id}` accepts the policy, so existing projects can be
+  reconciled without being recreated.
+
+### Needs the operator before merging
+
+- **[PR #12](https://github.com/dpeckham/my-ai-org/pull/12) contains
+  [PR #4](https://github.com/dpeckham/my-ai-org/pull/4) in full** — the diff
+  between their branches is additive only — and **both are cut from a base that
+  does not contain the operator's `1c9c1b4`** ("Add Liaison projects"). GitHub
+  reports both `MERGEABLE/CLEAN`, so nothing flags either problem at merge time.
+  Merging [#12](https://github.com/dpeckham/my-ai-org/pull/12) alone delivers
+  both pull requests' content; merging both means reviewing
+  [#4](https://github.com/dpeckham/my-ai-org/pull/4)'s content twice. Both
+  branches need rebasing onto `origin/main` before merge so their `README.md`,
+  `CLAUDE.md`, `ROADMAP.md` and this file are written with the Liaison feature
+  in view. Both are symptoms of
+  [#17](https://github.com/dpeckham/my-ai-org/issues/17), not separate defects.
+
+### Blocked
+
+- **A `git push` on `main` from either managed checkout would put unreviewed
+  agent commits straight onto `origin/main`**, and neither repo has branch
+  protection (`dpeckham/my-ai-org` reports `Branch not protected`;
+  `dpeckham/yawnbooks` is private on a plan without it). Nothing stops it until
+  [#17](https://github.com/dpeckham/my-ai-org/issues/17) merges. This is the
+  concrete cost of
+  [#11](https://github.com/dpeckham/my-ai-org/issues/11) still being open.
+
 ## 2026-10-04
 
 ### Done

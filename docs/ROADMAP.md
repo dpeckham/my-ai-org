@@ -222,7 +222,9 @@ Paperclip running, and the operator answers one agent question by email.
 
 ## Known defects
 
-Confirmed by reading the code on 2026-10-04, both affecting M1:
+The first two were confirmed by reading the code on 2026-10-04 and both affect
+M1; the third was found by the CTO review on 2026-10-05 and affects every
+project.
 
 1. **A project created outside a full install gets no skills** ([#5](https://github.com/dpeckham/my-ai-org/issues/5)).
    `scripts/newproject.sh` creates the six agents and fires the kickoff issue
@@ -240,6 +242,22 @@ Confirmed by reading the code on 2026-10-04, both affecting M1:
    labels were created by hand in this repo on 2026-10-04 to unblock the first
    pipeline run; that is a one-repo workaround and the defect is unchanged for
    every other repo.
+3. **The whole team shares one git working copy, and it is never reset** ([#17](https://github.com/dpeckham/my-ai-org/issues/17),
+   [#19](https://github.com/dpeckham/my-ai-org/issues/19)). Found by the CTO
+   review on 2026-10-05. All six role agents run against one Paperclip
+   workspace `cwd` (`scripts/newproject.sh:349-367`), no project sets
+   `executionWorkspacePolicy`, and the staged copy arrives with no
+   remote-tracking refs — so `git switch -c <branch> origin/<default-branch>`
+   fails at the start of a run and agents branch from a stale local `main`
+   instead, invisibly. Three defects in the open pull-request queues trace to
+   it, including two pull requests in `yawnbooks` adding the same file. Fixed in
+   two parts: a preflight guard
+   ([#17](https://github.com/dpeckham/my-ai-org/issues/17)), then per-issue
+   worktrees ([#19](https://github.com/dpeckham/my-ai-org/issues/19)). The two
+   checkouts already damaged are cleared by hand
+   ([#20](https://github.com/dpeckham/my-ai-org/issues/20)), by DevOps or the
+   operator. Reasoning in
+   [decisions/0006](decisions/0006-the-run-workspace-is-disposable.md).
 
 ## Out of scope
 
