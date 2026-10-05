@@ -4,6 +4,51 @@ Current status. Newest entry first. Keep it short: what is done, what is in
 flight, what is blocked, what is next. Goals and milestones live in
 [ROADMAP.md](ROADMAP.md).
 
+## 2026-10-05
+
+### Decided
+
+- **A sweep routine re-wakes stalled work; the per-agent heartbeat is
+  rejected.** Nothing re-checked an agent's queue on a schedule, so a wake event
+  that failed to arrive stopped the work for good — on the day this was written,
+  19 of the company's 25 open issues had not moved for 22 hours or more, nine of
+  them in `todo` with an agent assignee that then never ran, and neither repo had
+  a CI workflow on any branch as a result. The fix is one scheduled routine owned
+  by the DevOps agent, hourly, four-hour stall threshold, escalating to the Chief
+  of Staff after three fruitless nudges on the same issue. A heartbeat per agent
+  was the engineering review's own default and is rejected on evidence: the
+  control plane's OpenAPI document gives `runtimeConfig` exactly two properties,
+  `aiConnection` and `debug`, with no `heartbeat` and no cadence field anywhere,
+  so the installer would have been reconciling an undocumented field. Recorded in
+  [decisions/0006](decisions/0006-a-sweep-routine-re-wakes-stalled-work.md),
+  filed as [#18](https://github.com/dpeckham/my-ai-org/issues/18).
+- **It is sequenced ahead of M1's two defects.** M1's bar is that the operator did
+  not have to intervene to move a feature between roles; while a missed wake is
+  unrecoverable, no feature can meet that bar. This does not touch
+  [0002](decisions/0002-dogfood-the-pipeline-on-this-repo.md) — still dogfooded
+  on this repo, still M1 before M2 — only the order inside M1.
+
+Settled by observation rather than by asking:
+
+- **Agents that have never run are not evidence of a missed wake.** Four of the
+  five never-run agents had never had an issue assigned at all (three of them
+  zero, ever). An agent with an empty inbox exits immediately by design, so a
+  timer would buy nothing. They have never run because no feature has reached
+  build. Scope for #18 is stalled *work*, not idle agents.
+
+### In flight
+
+- **The recovery path** ([#18](https://github.com/dpeckham/my-ai-org/issues/18))
+  — spec written and handed to the Lead Engineer for spec review on 2026-10-05.
+  This is now M1's first feature.
+
+### Open for the operator
+
+- **The cost of an hourly sweep.** 24 runs a day for one agent, most ending
+  immediately with nothing stale, against a `budgetMonthlyCents: 0` that enforces
+  no ceiling. Flagged rather than blocking; the cadence is the cheapest thing to
+  lower. It folds into open question 2 below.
+
 ## 2026-10-04
 
 ### Done
@@ -154,8 +199,11 @@ Settled by observation rather than by asking:
 
 In the order the roadmap argues for:
 
-1. **Prove the pipeline once** (M1), dogfooded on this repo. The two confirmed
-   defects are the subject of that first run, not a prerequisite to it:
+1. **Prove the pipeline once** (M1), dogfooded on this repo.
+   [#18](https://github.com/dpeckham/my-ai-org/issues/18) (nothing re-wakes a
+   stalled agent) goes through the pipeline first, because the milestone's bar
+   cannot be met while a missed handoff is permanent. Then the two confirmed
+   defects, which are the subject of that run rather than a prerequisite to it:
    [#6](https://github.com/dpeckham/my-ai-org/issues/6) (nothing creates the
    `agent` / `ui` labels) first, then
    [#5](https://github.com/dpeckham/my-ai-org/issues/5) (new teams get no

@@ -66,9 +66,20 @@ do not know which parts work.
 and M1 comes before M2 — see
 [decisions/0002](decisions/0002-dogfood-the-pipeline-on-this-repo.md).
 
-- One real feature through all nine handoffs, dogfooded on this repo. The two
-  confirmed defects below are that feature: they are small, they are in the
-  installer, and fixing them is what the first run carries.
+- **First, the recovery path**
+  ([#18](https://github.com/dpeckham/my-ai-org/issues/18)): a scheduled sweep
+  that re-wakes an agent holding work that has not moved. While a missed wake is
+  unrecoverable, the "done when" below cannot be met by any feature — a handoff
+  that dies stops the run until a human notices. So this goes through the
+  pipeline ahead of the two defects, and the pipeline's own stalls get cleared by
+  hand this once. Mechanism and defaults decided in
+  [decisions/0006](decisions/0006-a-sweep-routine-re-wakes-stalled-work.md); the
+  per-agent heartbeat was rejected because the control plane documents no such
+  field.
+- One real feature at a time through all nine handoffs, dogfooded on this repo.
+  The recovery path above goes first, the two confirmed defects below follow.
+  All three are small, all three are in the installer, and fixing them is what
+  the first runs carry.
 - Sequenced, not parallel. The labels defect
   ([#6](https://github.com/dpeckham/my-ai-org/issues/6)) goes first because it
   is the smaller of the two and both edit `scripts/newproject.sh`; the skills
@@ -109,6 +120,11 @@ anything.
 
 - Confirm stalled work, failed runs and budget burn reach the operator, and
   fix them where they do not.
+  **Part of the stalled-work half arrives with M1's recovery path**
+  ([#18](https://github.com/dpeckham/my-ai-org/issues/18)): a stall that
+  survives three nudges is raised to the Chief of Staff rather than nudged
+  again, which is the first machinery in this repo that escalates rather than
+  reports. What remains here is the operator-facing end of it.
 - Settle budgets: `newproject.sh` creates the five non-Product-Manager agents
   with `budgetMonthlyCents: 0`, and the Product Manager gets a budget only
   when `--budget` is passed. `0` is not an enforced ceiling — every agent in
