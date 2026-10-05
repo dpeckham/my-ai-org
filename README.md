@@ -1110,6 +1110,18 @@ container (`--dry-run` first). If nothing is routed even then, check that the
 container's `gh` login is the account the client assigns work to (`gh api
 user -q .login`); that login is who "you" are to the bridge.
 
+**A diverged workspace's extra commit and dirty tree are usually not work.**
+When a run's workspace checkout comes back with local `main` ahead of
+`origin/main` and a dirty tree, the tip is typically a `Paperclip SSH sync merge
+<sha>` commit, and the uncommitted changes are often the *older* content the
+sync wrote over the branch's newer content. Both look like work worth rescuing
+and usually are not. Park them on pushed branches first — that part is not
+repeatable — then two cheap checks tell you what you have. If `git merge-tree
+--write-tree <parent1> <parent2>` returns the merge's own tree (`git rev-parse
+<merge>^{tree}`), the merge resolved nothing and carries no content of its own.
+If a dirty file's blob equals `origin/main:<file>` (compare with `git
+rev-parse`), it is the sync reverting branch work, not somebody's edit.
+
 ## Working with Incus directly
 
 Everything above goes through pixels and the scripts. These are the underlying
