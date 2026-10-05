@@ -18,6 +18,13 @@ flight, what is blocked, what is next. Goals and milestones live in
   ([#20](https://github.com/dpeckham/my-ai-org/issues/20), DevOps or the
   operator — a project agent cannot reach them). Recorded in
   [decisions/0006](decisions/0006-the-run-workspace-is-disposable.md).
+- **The `git_worktree` spike ran, and is closed.** One reversible experiment
+  ([#22](https://github.com/dpeckham/my-ai-org/issues/22)) applied the candidate
+  policy to one project, took one run under it, and rolled back — rollback
+  verified against the recorded original. Its answers are in
+  [#19](https://github.com/dpeckham/my-ai-org/issues/19)'s body, so that issue no
+  longer says *not yet observed* and is resolvable from the body alone. It owes
+  the Lead Engineer spec review round 2, because the body changed materially.
 
 ### Decided
 
@@ -47,6 +54,40 @@ Settled by observation rather than by asking:
   not just this one. Verified against `GET /api/companies/<id>/projects`.
   `PATCH /api/projects/{id}` accepts the policy, so existing projects can be
   reconciled without being recreated.
+- **The four undocumented worktree values are settled**, each from the running
+  Paperclip's own source rather than its OpenAPI document: the base comes from
+  `workspaceStrategy.baseRef` and must carry the `origin/` prefix (a bare `main`
+  is silently rewritten, or silently left on a local ref with unpushed commits);
+  the per-workspace `defaultRef` never reaches the resolver at all; the worktree
+  lands inside the checkout unless `worktreeParentDir` says otherwise; and nothing
+  reclaims it at end of run. Two silent failure modes found on the way: an
+  unrecognised `branchTemplate` placeholder renders empty and collapses every
+  issue onto one branch, and setting a workspace's `repoRef` would change today's
+  staging path. Detail in
+  [#19](https://github.com/dpeckham/my-ai-org/issues/19) and
+  [#22](https://github.com/dpeckham/my-ai-org/issues/22).
+- **Worktrees accumulate and each pins a branch**, so reclamation is its own
+  problem with its own failure mode (deleting a tree a run is still using). Filed
+  as [#24](https://github.com/dpeckham/my-ai-org/issues/24) rather than folded
+  into [#19](https://github.com/dpeckham/my-ai-org/issues/19), which leaves
+  `cleanupPolicy` unset.
+
+### Blocked
+
+- **Part 2 is inert until an operator flips an instance setting.** Paperclip
+  discards a project's `executionWorkspacePolicy` unless the instance-level
+  experimental setting `enableIsolatedWorkspaces` is on; it is off by default and
+  an agent key cannot even read it (`{"error":"Board access required"}`). With the
+  policy live, a real run still staged `project_primary`. With the Chief of Staff
+  as a decision — enable it, or accept that runs keep sharing one `cwd` and part 1
+  is the whole of the fix. [#19](https://github.com/dpeckham/my-ai-org/issues/19)
+  is still being built, deliberately inert, because the policy must exist before
+  the flag can act on it.
+- **Two questions the spike could not answer** wait on that same setting: whether
+  a run staged *from* a linked worktree still imports as a working repository, and
+  whether commits on a run's branch survive copy-back. The probe is parked and
+  re-runs when the flag is on; both are acceptance criteria on
+  [#19](https://github.com/dpeckham/my-ai-org/issues/19)'s live half.
 
 ### Needs the operator before merging
 
