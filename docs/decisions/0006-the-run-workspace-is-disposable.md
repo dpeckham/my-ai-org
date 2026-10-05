@@ -67,6 +67,28 @@ project run). It is filed as a runbook with preserve-before-reset steps, not as
 pipeline work, because it is a one-off hand operation whose failure mode is
 losing unpushed agent commits.
 
+**We observe platform behaviour once before a script commits to it.** Part 2
+rests on Paperclip's `git_worktree` strategy, and five of the values it has to
+choose — the base ref and its spelling, `branchTemplate`'s placeholder
+vocabulary, where the worktree lands, whether anything cleans it up, and whether
+a staged copy of a worktree is still a working repository — carry no description
+anywhere in Paperclip's OpenAPI document. Rather than let `newproject.sh` encode
+guesses that would fail silently in some future run, we spent one reversible
+experiment first: record the current policy, apply the candidate to a single
+low-traffic project, take one run under it, write down what happened, roll back,
+verify the rollback ([#22](https://github.com/dpeckham/my-ai-org/issues/22)).
+The answers then went into the issue body, so the handoff to the implementer
+states facts rather than defaults. This is now the pattern for any change where
+a script must commit to undocumented platform behaviour: one scoped,
+rolled-back observation, with its answers carried into the issue that needs
+them — not a plausible default shipped into a provisioning script, because a
+provisioning script's wrong guess is discovered by whoever is unlucky rather
+than by whoever wrote it. The cost was one spike; it paid for itself immediately
+by finding that part 2 cannot work at all yet (see Consequences) and by catching
+two silent failure modes — a bare branch name quietly resolving to a different
+commit, and an unrecognised `branchTemplate` placeholder collapsing every issue
+in a project onto one branch.
+
 ## Options considered
 
 - **The preflight guard alone.** Cheap, and it stops the observed damage.
@@ -122,3 +144,24 @@ losing unpushed agent commits.
   a worktree whose branch was never pushed, which is why
   [#19](https://github.com/dpeckham/my-ai-org/issues/19) defaults teardown to
   off.
+- **Part 2 is gated behind a setting no agent here can reach**, found by that
+  observation on 2026-10-05. Paperclip discards a project's
+  `executionWorkspacePolicy` unless the instance-level experimental setting
+  `enableIsolatedWorkspaces` is on, and it is off by default; a second, narrower
+  flag `enableWorktreeRunExecution` may also be required. An agent key cannot
+  even read them (`{"error":"Board access required"}`). So part 2 lands as
+  provisioning that is inert until an operator enables the flag — correct to
+  land, because the policy must exist before the flag can act on it, and
+  deliberately written to change no behaviour while the flag is off. The choice
+  between enabling it and accepting the shared workspace permanently is with the
+  Chief of Staff. Until that is decided, **part 1 is the only protection in
+  force**, which raises its priority rather than lowering it.
+- **The shared checkout's `main` is hard-reset to `origin/main` at staging.**
+  Also found by that observation (its reflog shows `reset: moving to
+  origin/main`), and it is the mechanism behind the diverged-workspace symptom
+  this decision started from: unpushed commits sitting in the shared checkout
+  are dropped under whoever is holding it. During the spike that discarded four
+  commits; none were lost, because all four exist on `origin` as
+  `rescue/my-ai-org-2026-10-05` and `rescue/my-ai-org-2026-10-05-worktree`. It
+  is also the sharpest argument for part 2: a per-issue worktree is not reset
+  under a running agent.
