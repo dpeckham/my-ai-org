@@ -956,6 +956,16 @@ IPv6 is dropped rather than allowed through.
 Each of these was found the hard way and will look like unrelated breakage
 if you hit it cold.
 
+**Handing work to the next role is `todo`, not `in_review`.** Paperclip rejects
+an agent-authored move to `in_review` with HTTP 422
+`invalid_issue_disposition: … must include a real review path` unless the issue
+has a pending interaction, a linked approval, a human assignee, a typed
+execution participant or a scheduled monitor. Another *agent* reviewing the work
+is none of those. Reassign with `status: "todo"` — the assignment is what wakes
+the next role, and `todo` is what the status guide means by "ready and
+actionable, not checked out". `in_review` is for waiting on a human or an
+external check, which is the one case where nothing else owns the next action.
+
 **pixels 0.6.2 silently half-provisions.** Leave `provision.devtools = false`.
 With it enabled, the Incus backend pushes
 `/home/pixel/.config/mise/config.toml` without creating the parent directory.
