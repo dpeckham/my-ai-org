@@ -73,7 +73,7 @@ and M1 comes before M2 — see
   that dies stops the run until a human notices. So this goes through the
   pipeline ahead of the two defects, and the pipeline's own stalls get cleared by
   hand this once. Mechanism and defaults decided in
-  [decisions/0006](decisions/0006-a-sweep-routine-re-wakes-stalled-work.md); the
+  [decisions/0007](decisions/0007-a-sweep-routine-re-wakes-stalled-work.md); the
   per-agent heartbeat was rejected because the control plane documents no such
   field.
 - One real feature at a time through all nine handoffs, dogfooded on this repo.

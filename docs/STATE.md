@@ -20,7 +20,7 @@ flight, what is blocked, what is next. Goals and milestones live in
   control plane's OpenAPI document gives `runtimeConfig` exactly two properties,
   `aiConnection` and `debug`, with no `heartbeat` and no cadence field anywhere,
   so the installer would have been reconciling an undocumented field. Recorded in
-  [decisions/0006](decisions/0006-a-sweep-routine-re-wakes-stalled-work.md),
+  [decisions/0007](decisions/0007-a-sweep-routine-re-wakes-stalled-work.md),
   filed as [#18](https://github.com/dpeckham/my-ai-org/issues/18).
 - **It is sequenced ahead of M1's two defects.** M1's bar is that the operator did
   not have to intervene to move a feature between roles; while a missed wake is

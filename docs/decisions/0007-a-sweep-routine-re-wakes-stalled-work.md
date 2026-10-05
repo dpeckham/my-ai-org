@@ -1,4 +1,4 @@
-# 0006 — A sweep routine re-wakes stalled work, not a per-agent heartbeat
+# 0007 — A sweep routine re-wakes stalled work, not a per-agent heartbeat
 
 - **Date:** 2026-10-05
 - **Status:** accepted
