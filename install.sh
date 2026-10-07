@@ -1,32 +1,28 @@
 #!/usr/bin/env bash
-# One command from a bare Linux machine to a working AI org: Incus, project
-# containers, Paperclip with a Chief of Staff and DevOps agent, and your
-# projects provisioned. Idempotent -- re-run it after any failure, or on an
-# existing install to bring it up to date; finished steps are skipped.
+# One command from a bare Linux machine to a terminal control plane for coding
+# agents: Incus, one box per repo, herdr on this host, and a `task` command
+# that opens an agent in its own worktree. Idempotent -- re-run it after any
+# failure, or on an existing install to bring it up to date.
 #
-#   ./install.sh [--company "Name"] [--projects FILE] [--no-projects]
+#   ./install.sh [--boxes FILE] [--no-boxes]
 #
-#   0. prereqs     installs Incus, mise, gh, jq, git (apt / pacman / dnf),
-#                  initialises Incus, joins incus-admin, makes an SSH key
+#   0. prereqs     installs Incus, mise, gh, jq, git, herdr, mosh (apt /
+#                  pacman / dnf), initialises Incus, joins incus-admin, makes
+#                  an SSH key
 #   1. logins      gh auth login, and a long-lived Claude token
 #                  (claude setup-token -> set-claude-token.sh), if missing
-#   2. host        host-setup.sh: restricted `agents` project, API on the
-#                  bridge, .incus DNS, pixels
-#   3. base image  the template every project box is cloned from
-#   4. paperclip   paperclip-up.sh: the control-plane container
-#   5. org         paperclip-org.sh: root company, Chief of Staff, CTO, DevOps
-#   6. GitHub bot  github-apps.sh: the App the reviewing roles act as
-#   7. projects    provision.sh FILE (default local/projects.manifest): a box
-#                  and a six-agent team per project. With no manifest yet,
-#                  writes one listing every repo you can access, all commented
-#                  out, and stops so you can choose.
-#   8. skills      skills-sync.sh: skills/sources.manifest into Paperclip
-#   9. boxes       refresh tools this repo ships onto existing boxes
+#   2. host        host-setup.sh: restricted `agents` project, .incus DNS,
+#                  pixels
+#   3. base image  the template every box is cloned from
+#   4. boxes       boxes.sh FILE (default local/boxes.manifest): a box per
+#                  line. With no manifest yet, writes one listing every repo
+#                  you can access, all commented out, and stops so you can
+#                  choose.
+#   5. task        puts scripts/task on your PATH (~/.local/bin/task)
 #
-# Upgrading is `git pull && ./install.sh`: every phase reconciles rather than
-# skipping what exists (the template rebuilds when base-setup.sh changes,
-# Paperclip updates itself, agents' instructions upgrade unless you edited
-# them).
+# Upgrading is `git pull && ./install.sh`: the template rebuilds when
+# base-setup.sh changes, and new manifest lines become boxes. Existing boxes
+# are never rebuilt for you.
 #
 # Interactive by design: it asks for sudo, and for browser sign-ins the first
 # time. Run it in a real terminal.
@@ -35,13 +31,12 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 S="$HERE/scripts"
-COMPANY=""; PROJECTS="$HERE/local/projects.manifest"; DO_PROJECTS=1
+BOXES="$HERE/local/boxes.manifest"; DO_BOXES=1
 ARGS=("$@")
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --company) COMPANY="${2:?}"; shift 2 ;;
-    --projects) PROJECTS="${2:?}"; shift 2 ;;
-    --no-projects) DO_PROJECTS=0; shift ;;
+    --boxes) BOXES="${2:?}"; shift 2 ;;
+    --no-boxes) DO_BOXES=0; shift ;;
     -h|--help) awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit 0 ;;
     *) echo "Unknown option: $1 (see --help)"; exit 1 ;;
   esac
@@ -73,13 +68,13 @@ esac
 info "distro: ${PRETTY_NAME:-unknown} (${FAMILY:-unsupported})"
 
 need=()
-for c in incus mise gh jq git curl ssh; do command -v "$c" >/dev/null || need+=("$c"); done
+for c in incus mise gh jq git curl ssh mosh; do command -v "$c" >/dev/null || need+=("$c"); done
 if [[ ${#need[@]} -gt 0 ]]; then
   info "installing: ${need[*]}"
   case "$FAMILY" in
     debian)
       sudo apt-get update -qq
-      sudo apt-get install -y -qq incus jq git curl gh openssh-client ca-certificates gnupg
+      sudo apt-get install -y -qq incus jq git curl gh openssh-client ca-certificates gnupg mosh
       if ! command -v mise >/dev/null; then
         # Same GPG-verified apt repo the containers use.
         sudo install -dm 755 /etc/apt/keyrings
@@ -89,9 +84,9 @@ if [[ ${#need[@]} -gt 0 ]]; then
         sudo apt-get update -qq && sudo apt-get install -y -qq mise
       fi ;;
     arch)
-      sudo pacman -S --needed --noconfirm incus mise github-cli jq git curl openssh ;;
+      sudo pacman -S --needed --noconfirm incus mise github-cli jq git curl openssh mosh ;;
     fedora)
-      sudo dnf install -y incus gh jq git curl openssh-clients
+      sudo dnf install -y incus gh jq git curl openssh-clients mosh
       command -v mise >/dev/null || { sudo dnf copr enable -y jdxcode/mise && sudo dnf install -y mise; } ;;
     *) die "unsupported distro; install these yourself, then re-run: ${need[*]}" ;;
   esac
@@ -124,6 +119,14 @@ if [[ -z "$(incus storage list --format csv 2>/dev/null)" ]]; then
 fi
 incus network show incusbr0 >/dev/null 2>&1 || die "Incus has no incusbr0 bridge; create one: incus network create incusbr0"
 
+# herdr is the one control plane, and it runs here, not in the boxes. A
+# distro or system package wins if there is one; otherwise mise's.
+if ! command -v herdr >/dev/null; then
+  info "installing herdr (mise)"
+  mise use -g herdr@latest >/dev/null
+fi
+info "herdr $(herdr --version 2>/dev/null | awk '{print $2}')"
+
 [[ -f "$HOME/.ssh/id_ed25519" ]] || { ssh-keygen -q -t ed25519 -N "" -f "$HOME/.ssh/id_ed25519"; info "created ~/.ssh/id_ed25519"; }
 info "ok"
 
@@ -132,7 +135,7 @@ phase "1. Sign-ins"
 if gh auth status >/dev/null 2>&1; then
   info "gh: signed in"
 else
-  info "gh: signing in (needed to clone private repos)"
+  info "gh: signing in (needed to clone private repos into boxes)"
   gh auth login
 fi
 
@@ -142,8 +145,8 @@ if [[ -s "$TOKEN_FILE" ]]; then
 else
   command -v claude >/dev/null || { info "installing claude-code (to mint the token)"; mise use -g claude-code@latest >/dev/null; }
   echo
-  echo "    Claude needs a long-lived subscription token. 'claude setup-token' opens a"
-  echo "    browser sign-in and prints the token; copy it, then paste it at the next prompt."
+  echo "    Claude needs a long-lived subscription token (not an API key). 'claude setup-token'"
+  echo "    opens a browser sign-in and prints the token; copy it, then paste it at the next prompt."
   read -r -p "    Press Enter to start... " _
   claude setup-token
   "$S/set-claude-token.sh" --no-boxes
@@ -177,55 +180,33 @@ else
   [[ $have_ready -eq 1 ]] && info "new boxes get the new toolchain; existing ones keep theirs (rebuild a box to upgrade it)"
 fi
 
-# ============================================================ 4. paperclip
-# paperclip-setup.sh also upgrades Paperclip and the container's tools on
-# every run (PAPERCLIP_UPDATE=0 to skip).
-phase "4. Paperclip"
-"$S/paperclip-up.sh"
-
-# ================================================================== 5. org
-phase "5. Organisation"
-"$S/paperclip-org.sh" ${COMPANY:+--company "$COMPANY"}
-
-# ============================================================ 6. GitHub bot
-# One GitHub App for every reviewing role. Created and installed once (two
-# browser clicks); after that this only checks it and refreshes Paperclip's
-# copy of its credentials. paperclip-org.sh runs again so the company-level
-# agents pick the credentials up on the first install.
-phase "6. GitHub bot"
-"$S/github-apps.sh"
-"$S/paperclip-org.sh" ${COMPANY:+--company "$COMPANY"} >/dev/null
-
-# ============================================================= 7. projects
-# newproject.sh is idempotent per project: it adds missing team members and
-# upgrades existing agents' instructions from templates/, so re-running this
-# after a pull brings every project's team up to date.
-phase "7. Projects"
-if [[ $DO_PROJECTS -eq 0 ]]; then
-  info "skipped (--no-projects)"
-elif [[ -f "$PROJECTS" ]]; then
-  "$S/provision.sh" "$PROJECTS"
+# ================================================================ 4. boxes
+phase "4. Boxes"
+if [[ $DO_BOXES -eq 0 ]]; then
+  info "skipped (--no-boxes)"
+elif [[ -f "$BOXES" ]]; then
+  "$S/boxes.sh" "$BOXES"
 else
-  "$S/list-repos.sh" "$PROJECTS"
+  "$S/list-repos.sh" "$BOXES"
   echo
-  echo "    No project list yet, so one was written with every repo you can access,"
+  echo "    No box list yet, so one was written with every repo you can access,"
   echo "    all commented out. Uncomment the ones you want, then re-run ./install.sh"
-  echo "    (or just scripts/provision.sh $PROJECTS)."
+  echo "    (or just scripts/boxes.sh $BOXES)."
 fi
 
-# =============================================================== 8. skills
-phase "8. Skills"
-"$S/skills-sync.sh"
-
-# ========================================================= 9. box refresh
-# Tools shipped from this repo onto boxes that already exist.
-phase "9. Existing boxes"
-for b in $(pixels list 2>/dev/null | awk 'NR>1 && $1 != "base" && $2 == "RUNNING" {print $1}'); do
-  "$S/seed-agent-auth.sh" --only gh-bot "px-$b" >/dev/null 2>&1 && info "px-$b: gh-bot refreshed" \
-    || info "px-$b: unreachable; skipped"
-done
+# ================================================================= 5. task
+# A symlink, so `git pull` updates the command too.
+phase "5. task command"
+install -d "$HOME/.local/bin"
+ln -sfn "$S/task" "$HOME/.local/bin/task"
+info "~/.local/bin/task -> scripts/task"
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) info "add ~/.local/bin to your PATH to run it as plain 'task'" ;;
+esac
 
 phase "Done"
-echo "  Paperclip:  http://localhost:3100"
-echo "  Boxes:      pixels list   /   ssh px-<name>"
-echo "  Upgrade:    git pull && ./install.sh   (only changes what is out of date)"
+echo "  Attach:     herdr                 (from your phone: mosh <this-host> -- herdr)"
+echo "  A task:     task new <box> <task> [claude|codex]"
+echo "  codex:      scripts/codex-login.sh <box>   (once per box)"
+echo "  Upgrade:    git pull && ./install.sh"

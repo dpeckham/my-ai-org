@@ -4,8 +4,12 @@
 #   incus file push base-setup.sh px-base/root/base-setup.sh
 #   incus exec px-base -- bash /root/base-setup.sh
 #
-# Installs git + gh + mise + herdr + t3 and the agent CLIs (claude-code,
-# codex, opencode) for the `pixel` user. Idempotent.
+# Installs git + gh + mise and the two agent CLIs, Claude Code and Codex, for
+# the `pixel` user. Only the official CLIs: they run on the operator's
+# subscriptions, and nothing here may set an API key. Idempotent.
+#
+# herdr is not installed here. It runs on the host, and panes reach into boxes
+# with `incus exec` (see scripts/task).
 #
 # Everything above the system layer goes through mise so there is exactly one
 # place to bump a version: /home/pixel/.config/mise/config.toml, which this
@@ -17,10 +21,6 @@ export DEBIAN_FRONTEND=noninteractive
 
 PIXEL_USER=pixel
 PIXEL_HOME="/home/$PIXEL_USER"
-
-# T3 Code has no mise registry entry, so its release tarball is pinned here.
-# Check https://github.com/pingdotgg/t3code/releases for newer versions.
-T3_VERSION="${T3_VERSION:-0.0.42}"
 
 [[ $EUID -eq 0 ]] || { echo "Run as root inside the container."; exit 1; }
 id "$PIXEL_USER" >/dev/null 2>&1 || {
@@ -52,18 +52,12 @@ apt-get update -qq
 apt-get install -y -qq mise
 
 # ------------------------------------------------------------- managed tools
-# node is explicit because the agent CLIs you'll add later (claude-code,
-# codex, opencode) all want a runtime, and t3's client assets assume one.
+# node is explicit because both agent CLIs want a runtime.
 step "mise tool manifest"
-case "$ARCH" in
-  amd64) T3_ARCH=x64 ;;
-  arm64) T3_ARCH=arm64 ;;
-  *) echo "No T3 Code release for arch $ARCH"; exit 1 ;;
-esac
 # Create .config explicitly: `install -d` only applies -o/-g to the final
 # component, so creating .config/mise in one shot leaves .config owned by root
-# and every later tool that wants ~/.config/<name> (herdr's socket dir, gh's
-# hosts file) fails with EACCES.
+# and every later tool that wants ~/.config/<name> (gh's hosts file, the
+# Claude token) fails with EACCES.
 install -d -o "$PIXEL_USER" -g "$PIXEL_USER" -m 755 "$PIXEL_HOME/.config"
 install -d -o "$PIXEL_USER" -g "$PIXEL_USER" -m 755 "$PIXEL_HOME/.config/mise"
 cat > "$PIXEL_HOME/.config/mise/config.toml" <<EOF
@@ -73,45 +67,23 @@ node = "lts"
 # Source control
 gh = "latest"
 
-# Agent control planes
-herdr = "latest"   # terminal workspace manager (aqua:ogulcancelik/herdr)
-
-# The agents themselves. herdr and T3 Code are control planes -- they drive
-# these and show an empty shell without them. pixels' own devtools step would
-# have installed this set, and it is disabled here (see pixels-config.toml),
-# so they have to be declared explicitly.
+# The agents. Official CLIs only: pixels' own devtools step would have
+# installed these, and it is disabled (see pixels-config.toml), so they are
+# declared here.
 claude-code = "latest"
 codex       = "latest"
-opencode    = "latest"
-
-# T3 Code comes from the vendor's release tarball, not npm. The npm package is
-# a launcher whose node-pty native module mise's npm backend does not fetch, so
-# \`t3 serve\` dies on "Failed to load native module: pty.node". The release
-# tarball ships build/Release/pty.node and its own client assets, so bin_path
-# points at the extracted dir rather than a lone binary.
-# Bumping t3 means bumping T3_VERSION at the top of this script.
-[tools."http:t3"]
-version  = "$T3_VERSION"
-url      = "https://github.com/pingdotgg/t3code/releases/download/v$T3_VERSION/t3-$T3_VERSION-linux-$T3_ARCH.tar.gz"
-bin_path = "t3-$T3_VERSION-linux-$T3_ARCH"
-
-[settings]
-# Paperclip stages every agent run in a fresh directory under here (the SSH
-# environment's remote workspace path) with the repo's mise.toml copied in.
-# mise refuses untrusted config, and Paperclip's callback bridge starts node
-# through the shims, so without this every issue-bound run dies before the
-# agent starts ("Config files in ... are not trusted"). It trusts only what
-# Paperclip stages, i.e. the same repos newbox.sh already trusts in ~/code.
-trusted_config_paths = ["$PIXEL_HOME/paperclip"]
 EOF
 chown "$PIXEL_USER:$PIXEL_USER" "$PIXEL_HOME/.config/mise/config.toml"
 
 step "Installing tools via mise (this pulls node first)"
 su - "$PIXEL_USER" -c 'mise trust --yes ~/.config/mise/config.toml' || true
 su - "$PIXEL_USER" -c 'mise install --yes'
+# A rebuild over an older template leaves tools the manifest no longer lists
+# (earlier versions shipped opencode, t3 and herdr); drop them and their shims.
+su - "$PIXEL_USER" -c 'mise prune --yes >/dev/null 2>&1; mise reshim' || true
 
 # mise activation for interactive shells; the shims dir keeps non-interactive
-# `ssh host t3 ...` working too, which is how herdr and t3 get driven remotely.
+# `ssh box cmd` working too.
 if ! grep -q 'mise activate bash' "$PIXEL_HOME/.bashrc" 2>/dev/null; then
   cat >> "$PIXEL_HOME/.bashrc" <<'EOF'
 
@@ -133,9 +105,8 @@ chmod 0644 /etc/profile.d/mise-shims.sh
 # profile.d only covers login shells. `ssh host <cmd>` is neither login nor
 # interactive, and the stock Debian/Ubuntu .bashrc returns early when it is
 # not interactive —
-# so neither file runs. That is precisely how `herdr --remote` and T3 Code's
-# SSH transport invoke things, so the shims have to be on PATH before any
-# shell starts. sshd runs PAM, and pam_env reads /etc/environment, which
+# so neither file runs. Scripts drive boxes exactly that way, so the shims
+# have to be on PATH before any shell starts. sshd runs PAM, and pam_env reads /etc/environment, which
 # applies to non-interactive sessions too.
 SHIMS="$PIXEL_HOME/.local/share/mise/shims"
 if [[ -f /etc/environment ]] && grep -q '^PATH=' /etc/environment; then
@@ -173,6 +144,69 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 EOF
 systemctl enable regenerate-ssh-host-keys.service >/dev/null 2>&1 || true
+
+# ------------------------------------------------------- egress refresh
+# `pixels network set <box> agent` resolves each allowed domain once, when it
+# is set, and puts those IPs in an nftables set. CDN-backed hosts move:
+# github.com answered with a different address within the hour, and every
+# `git fetch` then hung until it timed out. Two fixes, both additive (the set
+# only grows; nothing is flushed, so running agents are not disturbed):
+#   - GitHub's published IPv4 ranges (api.github.com/meta), fetched now;
+#   - a timer that re-resolves pixels' own domain list every minute.
+# It does nothing on a box whose egress is unrestricted (no pixels table).
+step "Egress allowlist refresh"
+install -d -m 755 /etc/my-ai-org
+{
+  echo "# GitHub's IPv4 ranges from api.github.com/meta, fetched by base-setup.sh $(date +%F)."
+  curl -fsSL https://api.github.com/meta \
+    | jq -r '[(.web + .api + .git)[] | select(contains(":") | not)] | unique | .[]'
+} > /etc/my-ai-org/egress-cidrs
+cat > /usr/local/sbin/my-ai-org-egress-refresh <<'EOF'
+#!/bin/bash
+# Re-resolve the pixels egress allowlist and add any new addresses.
+set -uo pipefail
+nft list table inet pixels_egress >/dev/null 2>&1 || exit 0
+add() { nft add element inet pixels_egress allowed_v4 "{ $1 }" 2>/dev/null || true; }
+grep -hv '^#' /etc/my-ai-org/egress-cidrs 2>/dev/null | while read -r c; do [ -n "$c" ] && add "$c"; done
+grep -hv '^#' /etc/pixels-egress-domains 2>/dev/null | while read -r d; do
+  [ -n "$d" ] || continue
+  for ip in $(getent ahostsv4 "$d" | awk '{print $1}' | sort -u); do add "$ip"; done
+done
+EOF
+chmod 755 /usr/local/sbin/my-ai-org-egress-refresh
+cat > /etc/systemd/system/my-ai-org-egress-refresh.service <<'EOF'
+[Unit]
+Description=Re-resolve the pixels egress allowlist (CDN addresses move)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/my-ai-org-egress-refresh
+EOF
+cat > /etc/systemd/system/my-ai-org-egress-refresh.timer <<'EOF'
+[Unit]
+Description=Re-resolve the pixels egress allowlist every minute
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
+EOF
+systemctl enable my-ai-org-egress-refresh.timer >/dev/null 2>&1 || true
+
+# ------------------------------------------------------- agent first-run
+# Claude Code's first interactive start runs onboarding (theme picker, then a
+# login-method menu) unless ~/.claude.json says it is done -- even with
+# CLAUDE_CODE_OAUTH_TOKEN set. In a herdr pane that looks like a login
+# prompt, so mark it done here. Credentials are not part of this: they are
+# seeded per box (seed-agent-auth.sh), never baked into the template.
+step "Claude Code first-run state"
+su - "$PIXEL_USER" -c '
+  f=~/.claude.json
+  [ -s "$f" ] || echo "{}" > "$f"
+  jq ".hasCompletedOnboarding = true" "$f" > "$f.new" && mv "$f.new" "$f"'
 
 # ------------------------------------------------------------------------ git
 step "git defaults"

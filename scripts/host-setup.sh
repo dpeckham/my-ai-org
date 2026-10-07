@@ -1,26 +1,20 @@
 #!/usr/bin/env bash
-# Prepare the machine that runs Incus for project containers + Paperclip.
+# Prepare the machine that runs Incus for repo boxes.
 # Run it ON that machine, as your normal user (in incus-admin; sudo is asked
 # for once, for the DNS unit). Idempotent.
 #
 #   scripts/host-setup.sh
 #
-# Does four things:
-#   1. Creates the `agents` Incus project, restricted and capped. Every project
-#      container lives there; Paperclip's DevOps agent gets a certificate that
-#      can touch nothing else.
-#   2. Binds the Incus API to the bridge address only, so containers (i.e.
-#      Paperclip) can reach it with a client certificate and the LAN cannot.
-#   3. Teaches systemd-resolved the bridge's `.incus` zone, so `px-foo.incus`
+# Does three things:
+#   1. Creates the `agents` Incus project, restricted and capped. Every box
+#      lives there, so nothing the agents do can reach the default project.
+#   2. Teaches systemd-resolved the bridge's `.incus` zone, so `px-foo.incus`
 #      resolves from this host the same way it does from inside a container.
-#   4. Installs pixels and points it at the local socket + `agents` project,
+#   3. Installs pixels and points it at the local socket + `agents` project,
 #      and adds the `px-*` SSH block.
 #
-# For driving a *separate* Incus box from a laptop instead, see
-# laptop-setup.sh (bootstrap.sh/firstboot.sh build such a box).
-#
 # Knobs (env): BRIDGE, PROJECT, AGENTS_CPU, AGENTS_MEMORY, AGENTS_INSTANCES,
-# PIXELS_VERSION, NO_DNS=1 (skip step 3, the only one that needs sudo).
+# PIXELS_VERSION, NO_DNS=1 (skip step 2, the only one that needs sudo).
 
 set -euo pipefail
 
@@ -75,19 +69,6 @@ incus profile device show default --project "$PROJECT" | grep -q '^eth0:' \
   || incus profile device add default eth0 nic network="$BRIDGE" name=eth0 --project "$PROJECT"
 incus project show "$PROJECT" | sed -n '/^config:/,/^description/p' | sed '$d'
 
-# ----------------------------------------------------------- API on bridge
-step "Incus API on $BRIDGE_IP:8443"
-CURRENT=$(incus config get core.https_address)
-if [[ -z "$CURRENT" ]]; then
-  incus config set core.https_address="$BRIDGE_IP:8443"
-  echo "Listening on $BRIDGE_IP:8443 (bridge only)"
-elif [[ "$CURRENT" == "$BRIDGE_IP:8443" ]]; then
-  echo "Already set"
-else
-  echo "core.https_address is already '$CURRENT'; leaving it. Paperclip needs"
-  echo "to reach it from the bridge, so check it covers $BRIDGE_IP."
-fi
-
 # -------------------------------------------------------------- .incus DNS
 # The unit is the one from the Incus docs ("Integrate with systemd-resolved").
 # Without it, `ssh px-foo` from this host cannot resolve px-foo.incus.
@@ -127,12 +108,7 @@ else
   echo ".$DNS_DOMAIN zone at $BRIDGE_IP yourself, or ssh px-* will not resolve."
 fi
 
-# On a headless box driven from a laptop (laptop-setup.sh), steps 1-2 are all
-# that is needed here, and such a box has no mise. Stop before step 4.
-if ! command -v mise >/dev/null; then
-  echo; echo "mise not found; skipping pixels + SSH setup (fine on a remote box)."
-  exit 0
-fi
+command -v mise >/dev/null || { echo "mise not found; run ./install.sh, which installs it."; exit 1; }
 
 # ------------------------------------------------------------------- pixels
 step "pixels $PIXELS_VERSION via mise"
@@ -161,8 +137,7 @@ echo "Wrote $CFG"
 #
 # Host keys go in their own file: every clone regenerates its host key and
 # names get recycled, so entries go stale constantly. newbox.sh clears the
-# stale one on create. Do NOT use UserKnownHostsFile=/dev/null -- `herdr
-# machine add` fails with "lost connection to server" without a real file.
+# stale one on create.
 #
 # Agent forwarding is off: these containers run AI coding agents, and a
 # forwarded agent would hand them your private keys.
@@ -189,13 +164,4 @@ if ! grep -qs 'config.d' "$HOME/.ssh/config"; then
 fi
 
 step "Done"
-cat <<EOF
-Next, build the dev base image (once):
-  pixels create base
-  incus file push base-setup.sh px-base/root/base-setup.sh --project $PROJECT
-  incus exec px-base --project $PROJECT -- bash /root/base-setup.sh
-  incus exec px-base --project $PROJECT -- bash -c 'rm -f /root/base-setup.sh /etc/ssh/ssh_host_*'
-  pixels checkpoint create base --label ready
-Then the control plane:
-  scripts/paperclip-up.sh
-EOF
+echo "Next: ./install.sh builds the base image and your boxes."
