@@ -1,0 +1,16 @@
+# Example manifest for scripts/boxes.sh. Placeholder names only; keep real
+# manifests out of this repo (they name real orgs and repos).
+#
+#   scripts/boxes.sh path/to/boxes.manifest [--dry-run]
+#
+# One box per line:  <name> <org/repo> [<org/repo>...] [newbox.sh options]
+# The line is exactly what you would pass to scripts/newbox.sh, with each
+# org/repo turned into --repo. The box is px-<name>, and <name> is also its
+# herdr workspace and the first argument to `task`.
+#
+# Blank lines and # comments are ignored. Quoting works as in a shell.
+
+widget    example-org/widget-api example-org/widget-web   # one box, two repos (task new widget x --repo widget-web)
+blog      example-user/blog
+firmware  example-org/firmware    --egress unrestricted   # opt out of the egress allowlist
+client    client-org/app          --no-auth               # no Claude token or gh login seeded

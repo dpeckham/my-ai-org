@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+# Start, stop and list agent tasks: one git worktree per task inside a repo
+# box, one herdr tab per task running the agent in that worktree.
+#
+#   task new <box> <task> [claude|codex] [--repo <name>]
+#   task rm  <box> <task> [--repo <name>] [--force]
+#   task ls
+#
+# <box> is the pixels name (foo for px-foo); in herdr it is the workspace.
+# <task> becomes the branch, the worktree directory and the tab label, so it
+# is limited to lowercase letters, digits, `-`, `_` and `.`.
+# --repo picks the repo when a box holds more than one (its directory name
+# under ~/code/<org>/).
+#
+# Worktrees live at ~/worktrees/<repo>/<task> in the box, branched from the
+# remote's default branch. `new` on a task whose worktree exists reopens it
+# (an existing branch is checked out, not recreated). `rm` refuses a worktree
+# with uncommitted changes unless --force, and always leaves the branch.
+#
+# The agent runs as `incus exec ... -- bash -lc 'exec claude'`, so the pane's
+# foreground process is `incus`, not the agent. HERDR_AGENT on that command
+# tells herdr which agent's screen rules to apply, which is what makes the
+# sidebar show idle / working / blocked for it.
+#
+# Uses the herdr session in $HERDR_SESSION, or the default one, and starts
+# its server if it is not running. Attach with `herdr` (or
+# `herdr session attach $HERDR_SESSION`).
+
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+. "$HERE/lib/box.sh"
+
+die()  { echo "task: $*" >&2; exit 1; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"; exit "${1:-0}"; }
+
+command -v herdr >/dev/null || die "herdr is not installed; run ./install.sh"
+command -v jq >/dev/null || die "jq is not installed"
+
+# ------------------------------------------------------------------ helpers
+hj() { herdr "$@"; }   # every herdr control command prints JSON
+
+ensure_herdr() {
+  hj workspace list >/dev/null 2>&1 && return
+  echo "starting the herdr server${HERDR_SESSION:+ (session $HERDR_SESSION)}"
+  setsid -f herdr ${HERDR_SESSION:+--session "$HERDR_SESSION"} server >/dev/null 2>&1 </dev/null
+  for _ in $(seq 1 20); do
+    hj workspace list >/dev/null 2>&1 && return
+    sleep 0.5
+  done
+  die "herdr server did not come up"
+}
+
+workspace_id() {  # workspace_id <label> -> id or empty
+  hj workspace list | jq -r --arg l "$1" '.result.workspaces[] | select(.label == $l) | .workspace_id' | head -1
+}
+
+tab_id() {  # tab_id <workspace-id> <label> -> id or empty
+  [[ -n "$1" ]] || return 0
+  hj tab list --workspace "$1" | jq -r --arg l "$2" '.result.tabs[] | select(.label == $l) | .tab_id' | head -1
+}
+
+box_running() {
+  [[ "$(incus list "px-$1" --project "$PROJECT" -c s --format csv 2>/dev/null)" == RUNNING ]]
+}
+
+# The repo checkout a task branches from: ~/code/<org>/<repo>. With one repo
+# in the box, that one; otherwise the one named by --repo.
+find_repo() {  # find_repo <box> <repo-or-empty> -> path
+  local repos
+  repos=$(box_sh "$1" 'for d in ~/code/*/*/; do [ -d "$d.git" ] && echo "${d%/}"; done; true' </dev/null)
+  [[ -n "$repos" ]] || die "px-$1 has no repo under ~/code/<org>/<repo>"
+  if [[ -n "$2" ]]; then
+    repos=$(grep -E "/$2\$" <<<"$repos" || true)
+    [[ -n "$repos" ]] || die "px-$1 has no repo named $2"
+  fi
+  [[ $(wc -l <<<"$repos") -eq 1 ]] || die "px-$1 has several repos; pick one with --repo: $(xargs -n1 basename <<<"$repos" | xargs)"
+  echo "$repos"
+}
+
+# ---------------------------------------------------------------------- new
+cmd_new() {
+  local box="" task="" agent=claude repo=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo) repo="${2:?--repo needs a name}"; shift 2 ;;
+      -h|--help) usage ;;
+      -*) die "unknown option $1" ;;
+      *) if [[ -z "$box" ]]; then box="$1"; elif [[ -z "$task" ]]; then task="$1"; else agent="$1"; fi; shift ;;
+    esac
+  done
+  box="${box#px-}"
+  [[ -n "$box" && -n "$task" ]] || usage 1
+  [[ "$task" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "task names are lowercase letters, digits, '-', '_' and '.'"
+  [[ "$agent" == claude || "$agent" == codex ]] || die "agent must be claude or codex, not $agent"
+  box_running "$box" || die "px-$box is not running (pixels start $box)"
+  no_api_keys "$box"
+
+  local src name wt
+  src=$(find_repo "$box" "$repo")
+  name=$(basename "$src")
+  wt="$PIXEL_HOME/worktrees/$name/$task"
+
+  # Branch from the remote's current default branch, fetched just now, so a
+  # task never starts from a stale local main. No early `exit` in these
+  # snippets: in a Debian login shell it runs ~/.bash_logout, which returns 1.
+  echo "px-$box: worktree $wt"
+  box_sh "$box" "
+    set -e
+    cd '$src'
+    if [ -d '$wt' ]; then
+      echo '    exists; reopening'
+    else
+      git fetch -q origin
+      base=\$(git symbolic-ref -q --short refs/remotes/origin/HEAD || echo origin/main)
+      mkdir -p '$(dirname "$wt")'
+      if git show-ref -q --verify 'refs/heads/$task'; then
+        git worktree add -q '$wt' '$task'
+        echo '    on existing branch $task'
+      else
+        git worktree add -q -b '$task' '$wt' \"\$base\"
+        echo \"    new branch $task from \$base\"
+      fi
+    fi" </dev/null
+
+  # Mark the worktree trusted, or each new task opens on the agent's
+  # trust-this-folder prompt. These are your own repos in your own box, the
+  # same trust you gave the checkout they come from. claude rewrites
+  # ~/.claude.json while it runs, so another task's claude can drop the flag;
+  # the worst case is that prompt, which herdr shows as blocked.
+  box_sh "$box" "
+    f=~/.claude.json; [ -s \"\$f\" ] || echo '{}' > \"\$f\"
+    jq --arg p '$wt' '.projects[\$p].hasTrustDialogAccepted = true' \"\$f\" > \"\$f.new\" && mv \"\$f.new\" \"\$f\"
+    mkdir -p ~/.codex; touch ~/.codex/config.toml
+    grep -qF '[projects.\"$wt\"]' ~/.codex/config.toml ||
+      printf '\n[projects.\"%s\"]\ntrust_level = \"trusted\"\n' '$wt' >> ~/.codex/config.toml" </dev/null
+
+  # One workspace per box, one tab per task. A new workspace comes with a
+  # tab already, which the first task takes over.
+  ensure_herdr
+  local ws tab pane
+  ws=$(workspace_id "$box")
+  if [[ -n "$(tab_id "$ws" "$task")" ]]; then
+    echo "herdr: $box / $task is already open"
+    return
+  fi
+  if [[ -z "$ws" ]]; then
+    local out
+    out=$(hj workspace create --label "$box" --cwd "$HOME" --no-focus)
+    ws=$(jq -r .result.workspace.workspace_id <<<"$out")
+    tab=$(jq -r .result.tab.tab_id <<<"$out")
+    pane=$(jq -r .result.root_pane.pane_id <<<"$out")
+    hj tab rename "$tab" "$task" >/dev/null
+  else
+    local out
+    out=$(hj tab create --workspace "$ws" --label "$task" --cwd "$HOME" --no-focus)
+    pane=$(jq -r .result.root_pane.pane_id <<<"$out")
+  fi
+
+  box_argv "$box" "$wt"
+  local cmd
+  cmd="HERDR_AGENT=$agent $(printf '%q ' "${BOX_ARGV[@]}")-- bash -lc 'exec $agent'"
+  hj pane run "$pane" "$cmd" >/dev/null
+  echo "herdr: $box / $task running $agent (pane $pane)"
+}
+
+# ----------------------------------------------------------------------- rm
+cmd_rm() {
+  local box="" task="" repo="" force=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo) repo="${2:?--repo needs a name}"; shift 2 ;;
+      --force) force=1; shift ;;
+      -h|--help) usage ;;
+      -*) die "unknown option $1" ;;
+      *) if [[ -z "$box" ]]; then box="$1"; elif [[ -z "$task" ]]; then task="$1"; else die "unexpected $1"; fi; shift ;;
+    esac
+  done
+  box="${box#px-}"
+  [[ -n "$box" && -n "$task" ]] || usage 1
+  box_running "$box" || die "px-$box is not running (pixels start $box)"
+
+  local src wt dirty
+  src=$(find_repo "$box" "$repo")
+  wt="$PIXEL_HOME/worktrees/$(basename "$src")/$task"
+
+  if box_sh "$box" "[ -d '$wt' ]" </dev/null; then
+    dirty=$(box_sh "$box" "git -C '$wt' status --porcelain" </dev/null)
+    if [[ -n "$dirty" && $force -eq 0 ]]; then
+      echo "$wt has uncommitted changes:" >&2
+      sed 's/^/    /' <<<"$dirty" | head -20 >&2
+      die "commit or stash them, or pass --force to discard them"
+    fi
+  else
+    echo "px-$box: no worktree at $wt"
+  fi
+
+  # Close the tab first, so the agent is gone before its directory is.
+  if hj workspace list >/dev/null 2>&1; then
+    local ws tab
+    ws=$(workspace_id "$box"); tab=$(tab_id "$ws" "$task")
+    if [[ -n "$tab" ]]; then
+      hj tab close "$tab" >/dev/null && echo "herdr: closed $box / $task"
+    fi
+  fi
+
+  if box_sh "$box" "[ -d '$wt' ]" </dev/null; then
+    box_sh "$box" "git -C '$src' worktree remove $([[ $force -eq 1 ]] && echo --force) '$wt' && git -C '$src' worktree prune" </dev/null
+    echo "px-$box: removed $wt (branch $task kept)"
+  fi
+}
+
+# ----------------------------------------------------------------------- ls
+cmd_ls() {
+  local herdr_up=0
+  hj workspace list >/dev/null 2>&1 && herdr_up=1
+  local boxes
+  boxes=$(incus list --project "$PROJECT" -c ns --format csv | awk -F, '$1 ~ /^px-/ && $1 != "px-base" && $2 == "RUNNING" {sub(/^px-/, "", $1); print $1}')
+  printf '%-20s %-24s %-28s %-6s %s\n' BOX REPO TASK DIRTY HERDR
+  for box in $boxes; do
+    local ws=""
+    [[ $herdr_up -eq 1 ]] && ws=$(workspace_id "$box")
+    # Worktrees listed by git, not by directory, so a directory left behind
+    # by hand does not show up as a task.
+    box_sh "$box" '
+      for d in ~/code/*/*/; do
+        [ -d "$d.git" ] || continue
+        git -C "$d" worktree list --porcelain | sed -n "s/^worktree //p" | while read -r wt; do
+          case "$wt" in "$HOME"/worktrees/*) ;; *) continue ;; esac
+          n=$(git -C "$wt" status --porcelain 2>/dev/null | wc -l)
+          printf "%s\t%s\t%s\n" "$(basename "${d%/}")" "$(basename "$wt")" "$n"
+        done
+      done' </dev/null |
+    while IFS=$'\t' read -r repo task n; do
+      local state="-"
+      if [[ -n "$ws" ]]; then
+        state=$(hj tab list --workspace "$ws" | jq -r --arg l "$task" '.result.tabs[] | select(.label == $l) | .agent_status' | head -1)
+        state="${state:-closed}"
+      elif [[ $herdr_up -eq 0 ]]; then
+        state="(herdr not running)"
+      fi
+      printf '%-20s %-24s %-28s %-6s %s\n' "$box" "$repo" "$task" "$n" "$state"
+    done
+  done
+}
+
+case "${1:-}" in
+  new) shift; cmd_new "$@" ;;
+  rm)  shift; cmd_rm "$@" ;;
+  ls)  shift; cmd_ls "$@" ;;
+  -h|--help|help|"") usage ;;
+  *) die "unknown command $1 (new, rm, ls)" ;;
+esac
